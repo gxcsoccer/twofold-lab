@@ -1,0 +1,25 @@
+node_modules/
+.pnpm-store/
+.next/
+dist/
+/lib/
+coverage/
+.turbo/
+.vercel/
+.DS_Store
+*.log
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+supabase/.branches/
+supabase/.temp/
+
+# Local DeepSeek Harness profile state
+.dsh/
+
+# Local Harness transcripts and machine identity
+# Session archives can contain full prompts, tool payloads, and market evidence.
+sessions/
+.anonymous-user-id

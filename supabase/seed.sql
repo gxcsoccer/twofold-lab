@@ -1,0 +1,3 @@
+-- Intentionally empty.
+-- Season IDs, run IDs and operator commands are production audit inputs and
+-- must not be silently invented by a development seed.

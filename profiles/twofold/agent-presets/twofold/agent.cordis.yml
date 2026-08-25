@@ -1,0 +1,5 @@
+# Dedicated Twofold Agent-plane composition. The single package row installs
+# the complete persona, request route lock, inherited-tool mask, execution
+# guard, and the two domain tools.
+- id: twofold-agent
+  name: '@twofold-lab/dsh-twofold/agent'

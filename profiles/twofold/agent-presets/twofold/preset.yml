@@ -1,0 +1,3 @@
+name: Twofold 决策 Agent
+description: 仅使用冻结 decision packet，输出并提交目标投资组合；无 Shell、文件、网络或子代理能力。
+order: 1

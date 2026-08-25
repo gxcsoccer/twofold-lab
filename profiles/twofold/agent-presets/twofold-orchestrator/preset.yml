@@ -1,0 +1,3 @@
+name: Twofold 编排 Agent
+description: 使用冻结 decision packet，通过受控前台子 Agent 完成研究与交叉复核后提交唯一目标组合。
+order: 2

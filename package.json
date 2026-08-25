@@ -1,0 +1,31 @@
+{
+  "name": "twofold-lab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "After-tax paper trading experiments for Models x Skills",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "dev": "node scripts/run-dashboard.mjs --port=3000",
+    "dev:dogfood": "node scripts/run-dashboard.mjs --port=3210",
+    "dev:worker": "pnpm --filter @twofold/worker dev",
+    "dogfood:agent": "pnpm --filter @twofold-lab/dsh-twofold build && node --env-file-if-exists=.env --env-file-if-exists=.env.local apps/worker/node_modules/tsx/dist/cli.mjs apps/worker/src/dogfood-agent.ts",
+    "ingest:market": "node --env-file-if-exists=.env --env-file-if-exists=.env.local apps/worker/node_modules/tsx/dist/cli.mjs apps/worker/src/ingest-market.ts",
+    "portfolio:validate": "node apps/worker/node_modules/tsx/dist/cli.mjs apps/worker/src/validate-portfolio.ts",
+    "smoke:deepseek": "node scripts/smoke-deepseek.mjs",
+    "test": "pnpm -r --if-present test",
+    "test:db:migration:remote": "node scripts/preflight-remote-migration.mjs supabase/migrations/202608250009_atomic_paper_fill_settlement.sql supabase/tests/paper_fill_settlement_contract.sql",
+    "test:db:remote": "node scripts/run-remote-pgtap.mjs supabase/tests/control_plane_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/market_data_pipeline_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/arena_decision_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/accounting_kernel_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/paper_fill_settlement_contract.sql",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "verify:harness": "pnpm --filter @twofold-lab/dsh-twofold verify:harness && pnpm --filter @twofold-lab/dsh-twofold verify:profile",
+    "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm verify:harness"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

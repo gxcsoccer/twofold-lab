@@ -1,0 +1,27 @@
+# Agent League composition. The scoped subagent tool is foreground-only and
+# gives every child an empty tool set plus a research-only persona. The Arena
+# plugin retains the model lock, packet fence, final submission, and monotonic
+# denial of every capability outside this exact list.
+- id: twofold-research-subagent
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: subagent
+    enableRunInBackground: false
+    backgroundMode: one-shot
+    maxDepth: 1
+    agentOptions:
+      provider: deepseek-official
+      model: deepseek-v4-pro
+      maxTokens: 8192
+    toolFilter:
+      allow: []
+    persona: >-
+      You are a research subagent inside one Twofold Lab portfolio decision.
+      Analyse only the time-fenced packet facts included in your delegated
+      prompt. You have no tools, cannot delegate, and cannot submit a portfolio.
+      Return concise evidence, uncertainty, risks, and any disagreement; never
+      invent current facts or claim that an order was placed.
+
+- id: twofold-orchestrator-agent
+  name: '@twofold-lab/dsh-twofold/orchestrator'

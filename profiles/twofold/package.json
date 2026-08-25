@@ -1,0 +1,15 @@
+{
+  "name": "dsh-profile-twofold",
+  "private": true,
+  "dependencies": {
+    "@twofold-lab/dsh-twofold": "link:../../packages/dsh-twofold"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@twofold-lab/dsh-twofold"
+      ]
+    }
+  }
+}

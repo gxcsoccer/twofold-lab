@@ -1,0 +1,3 @@
+# Deployment-local overrides go here. This committed profile intentionally has
+# none: model, catalog, tool, and preset policy come from the versioned bundle.
+[]
