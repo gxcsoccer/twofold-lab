@@ -15,6 +15,8 @@ import {
   validateArenaDecisionProjection,
   validateArenaDecisionProjectionEvidence,
 } from "@/lib/data/arena-decision";
+import { validateAcceptedTargetCycleProjection } from "@/lib/data/accepted-target-cycle";
+import { validateAcceptedTargetCycleReadiness } from "@/lib/data/accepted-target-cycle-readiness";
 
 interface ProjectionRow<T> {
   state: T;
@@ -252,6 +254,60 @@ export class SupabaseDashboardRepository implements DashboardRepository {
       throw new ProjectionContractError(projectionKey, issues);
     }
 
+    const cycleProjectionKey = `dashboard.accepted_target_cycle/${decisionId}`;
+    const cycleResult = await this.client
+      .from("projection")
+      .select("state")
+      .eq("projection_name", "dashboard.accepted_target_cycle")
+      .eq("entity_id", decisionId)
+      .maybeSingle();
+    if (cycleResult.error) {
+      throw new ProjectionReadError(cycleProjectionKey, cycleResult.error.code);
+    }
+    const executionCycle = cycleResult.data === null
+      ? null
+      : validateAcceptedTargetCycleProjection(
+          (cycleResult.data as ProjectionRow<unknown>).state,
+          decisionId,
+          stateResult.value.submission.acceptedSubmissionId,
+        );
+    if (executionCycle !== null && !executionCycle.ok) {
+      throw new ProjectionContractError(cycleProjectionKey, executionCycle.issues);
+    }
+
+    const readinessKey = `accepted_target_cycle_readiness/${decisionId}`;
+    const readinessResult = await this.client.rpc(
+      "get_accepted_target_cycle_readiness",
+      { p_decision_id: decisionId },
+    );
+    if (readinessResult.error) {
+      throw new ProjectionReadError(readinessKey, readinessResult.error.code);
+    }
+    const executionReadiness = validateAcceptedTargetCycleReadiness(
+      readinessResult.data,
+      decisionId,
+    );
+    if (!executionReadiness.ok) {
+      throw new ProjectionContractError(readinessKey, executionReadiness.issues);
+    }
+    const readinessIssues: string[] = [];
+    const acceptedSubmissionId = stateResult.value.submission.acceptedSubmissionId;
+    if (
+      acceptedSubmissionId !== null
+      && executionReadiness.value.acceptedSubmissionId !== null
+      && executionReadiness.value.acceptedSubmissionId !== acceptedSubmissionId
+    ) readinessIssues.push("readiness acceptedSubmissionId 与 decision 投影不一致");
+    if (
+      executionCycle?.ok
+      && (
+        executionReadiness.value.status !== "COMPLETED"
+        || executionReadiness.value.cycleId !== executionCycle.value.cycleId
+      )
+    ) readinessIssues.push("readiness 与已提交 cycle 投影不一致");
+    if (readinessIssues.length > 0) {
+      throw new ProjectionContractError(readinessKey, readinessIssues);
+    }
+
     return {
       decisionId,
       connection: {
@@ -264,6 +320,8 @@ export class SupabaseDashboardRepository implements DashboardRepository {
       status: "READY",
       projection: stateResult.value,
       evidence: evidenceResult.value,
+      executionCycle: executionCycle?.value ?? null,
+      executionReadiness: executionReadiness.value,
       issues: [],
     };
   }

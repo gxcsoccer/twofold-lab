@@ -354,7 +354,7 @@ export function createOpeningLedgerTransactions(input: {
         postings: [
           {
             postingId: `${transactionId}:asset`,
-            accountId: `asset:cash:${cashKind}`,
+            accountId: cashKind === "settled" ? "asset.cash" : "asset.cash.unsettled",
             accountKind: "ASSET",
             side: "DEBIT",
             amount,
@@ -385,17 +385,25 @@ export function createOpeningLedgerTransactions(input: {
       postings: [
         {
           postingId: `${transactionId}:asset`,
-          accountId: `asset:position-cost:${lot.instrumentId}`,
+          accountId: "securities.inventory",
           accountKind: "ASSET",
           side: "DEBIT",
-          amount: lot.taxBasis,
+          amount: lot.grossPurchasePrice,
           currency: lot.currency,
           instrumentId: lot.instrumentId,
           quantity: lot.quantity,
         },
+        ...(lot.buyFees === "0" ? [] : [{
+          postingId: `${transactionId}:fee`,
+          accountId: "expense.broker_fee",
+          accountKind: "EXPENSE" as const,
+          side: "DEBIT" as const,
+          amount: lot.buyFees,
+          currency: lot.currency,
+        }]),
         {
           postingId: `${transactionId}:equity`,
-          accountId: "equity:opening-balance",
+          accountId: "equity.opening_balance",
           accountKind: "EQUITY",
           side: "CREDIT",
           amount: lot.taxBasis,

@@ -26,11 +26,11 @@ configuration gaps without showing fabricated values.
 Exit: the Phase A acceptance tests in the product specification pass without a model call.
 
 Current: the pure arithmetic, portfolio validation, fee/FIFO-tax/NAV/Round
-reducers, S1/S2 plan simulation, frozen-plan database admission contract, and
-one deployed ledger-head-backed atomic S2 BUY settlement slice are implemented.
-The exit is not met: real Futu holdings, pre-positioned head initialization,
-trusted official-price/FX ingestion, exchange calendars, atomic S1 FIFO/CNY tax
-settlement, and runtime scheduling remain required.
+reducers, one deterministic accepted-target -> S1/S2 -> ledger -> NAV cycle,
+frozen-plan admission, a content-addressed cycle commit/projection, and one
+ledger-head-backed atomic S2 BUY slice are implemented. The exit is not met:
+real Futu holdings, trusted official-price/FX ingestion, exchange calendars,
+and runtime scheduling remain required.
 
 ## Milestone 2: decision orchestration
 
@@ -39,8 +39,10 @@ settlement, and runtime scheduling remain required.
 - One logical DeepSeek V4 Pro decision invocation, metered provider steps,
   schema validation, and one format-only repair.
 - Two-stage S1/S2 order generation and deterministic cash-limited fills.
-- Durable handoff into the deployed S2 settlement boundary; the current Worker
-  has exact RPC primitives but does not schedule or auto-authorize settlement.
+- Durable Worker handoff that registers both plans and commits one exact cycle
+  artifact is implemented. A deployed causal readiness gate now exposes the
+  first durable seed blocker; input construction, scheduling, and stage-specific
+  real-evidence authorization remain.
 - Stored Harness transcript evidence linked to the Twofold decision event.
 
 Exit: a complete keyless replay and one credentialed sandbox decision produce the same stored execution path after the model output is frozen.

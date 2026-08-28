@@ -1,7 +1,7 @@
 # Twofold Lab architecture
 
-Status: accepted target architecture with explicit implementation gaps,
-2026-08-24.
+Status: accepted-target replay cycle and causal seed-readiness gate implemented
+with explicit live-data gaps, 2026-08-28.
 
 ## Runtime topology
 
@@ -26,9 +26,11 @@ Persistent Twofold Arena / worker
   -> launches the trusted frozen host Bundle as a root Session tree
   -> brokers packet data, tree budget, and target submission capabilities
   -> runs pinned DeepSeek Harness in-process for the audited host Bundle
-  -> exact fee/tax/NAV/Round and S1/S2 simulation core
+  -> exact accepted-target -> S1/S2 -> ledger -> NAV Core
+  -> content-addressed cycle commit and decision projection
+  -> causal accepted-target seed-readiness read boundary
   -> deployed primitive: ledger-backed atomic S2 BUY settlement
-  -> target: durable S1/S2 scheduling and full FIFO/CNY tax settlement
+  -> target: durable evidence-aware scheduling for real cycles
   -> target: isolated execution profiles for external Bundles
   -> writes business events and content-addressed artifacts
 ```
@@ -177,11 +179,10 @@ The DeepSeek API key is stored only in the Harness credential store or the worke
   unimplemented; the current execution path is restricted to the audited host
   `twofold-orchestrator` Bundle.
 - Formal Season startup still requires holdings tax lots, cash, dates, Skill commits, data providers, broker fee facts, and tax assumptions.
-- Core order simulation is not a settlement authority. The deployed database
-  boundary can atomically settle only simulated S2 USD BUY orders from trusted
-  official-open and acquisition-FX evidence under a locked ledger head. S1,
-  pre-positioned opening accounts, evidence ingestion, and durable runtime
-  handoff remain fail closed.
-- Current shadow capital-gains calculations are a nominal USD proxy. Formal
-  China-resident tax requires acquisition/disposition CNY FX evidence and
-  rule-versioned conversion.
+- Core is the single financial-derivation authority for the accepted-target
+  replay cycle. Supabase atomically admits its exact bytes only after both plans
+  exist and verifies identity, content hash, stage/order conservation, NAV
+  arithmetic, and run-stream CAS. The older per-fill SQL boundary remains S2-only.
+- S1 Core settlement requires acquisition and disposition USD/CNY evidence and
+  applies the frozen strict FIFO tax ruleset; missing evidence fails closed.
+  Trusted live ingestion and a real pre-positioned opening account remain absent.

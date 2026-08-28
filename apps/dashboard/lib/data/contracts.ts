@@ -346,12 +346,66 @@ export interface ArenaDecisionProjectionEvidence {
   projectionUpdatedAt: string;
 }
 
+export interface AcceptedTargetCycleProjection {
+  schema: "twofold.dashboard.accepted_target_cycle/v1";
+  status: "COMPLETED";
+  cycleId: string;
+  decisionId: string;
+  acceptedSubmissionId: string;
+  s1: {
+    status: "COMPLETED";
+    orderCount: string;
+    settlementCount: string;
+  };
+  s2: {
+    status: "COMPLETED";
+    orderCount: string;
+    settlementCount: string;
+  };
+  ledger: {
+    transactionCount: string;
+    headSequence: string;
+    headSha256: string;
+  };
+  nav: {
+    currency: string;
+    positionMarketValue: string;
+    brokerNav: string;
+    taxReserveDeductions: string;
+    taxReservedNav: string;
+    liquidationDeductions: string;
+    liquidationNav: string;
+  };
+  artifactSha256: string;
+  completedAt: string;
+}
+
+export type AcceptedTargetCycleBlocker =
+  | "DECISION_NOT_FOUND"
+  | "ACCEPTED_SUBMISSION_MISSING"
+  | "STRATEGY_ACCOUNT_MISSING"
+  | "LEDGER_HEAD_MISSING";
+
+export interface AcceptedTargetCycleReadiness {
+  schema: "twofold.accepted_target_cycle_readiness/v1";
+  status: "BLOCKED" | "READY_FOR_INPUT_BUILD" | "COMPLETED";
+  decisionId: string;
+  runId: string | null;
+  acceptedSubmissionId: string | null;
+  strategyAccountId: string | null;
+  ledgerHeadSha256: string | null;
+  cycleId: string | null;
+  blockers: readonly AcceptedTargetCycleBlocker[];
+}
+
 export interface ArenaDecisionPageData {
   decisionId: string;
   connection: ConnectionSummary;
   status: "UNCONFIGURED" | "NOT_READY" | "READY" | "ERROR";
   projection: ArenaDecisionProjection | null;
   evidence: ArenaDecisionProjectionEvidence | null;
+  executionCycle: AcceptedTargetCycleProjection | null;
+  executionReadiness: AcceptedTargetCycleReadiness | null;
   issues: string[];
 }
 

@@ -68,9 +68,18 @@ describe("initial portfolio import contract", () => {
       "run-a:opening:lot:later-lot",
     ]);
     expect(transactions[1]?.postings[0]).toMatchObject({
-      amount: "400.99",
+      accountId: "securities.inventory",
+      amount: "400",
       instrumentId: "instrument-lulu",
       quantity: "1",
+    });
+    expect(transactions[1]?.postings[1]).toMatchObject({
+      accountId: "expense.broker_fee",
+      amount: "0.99",
+    });
+    expect(transactions[1]?.postings[2]).toMatchObject({
+      accountId: "equity.opening_balance",
+      amount: "400.99",
     });
   });
 

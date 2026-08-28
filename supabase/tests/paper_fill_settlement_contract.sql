@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(80);
+select plan(96);
 
 create or replace function pg_temp.settlement_sha256(p_value text)
 returns text
@@ -270,7 +270,7 @@ insert into public.event_stream (
 ) values
   (
     '84000000-0000-4000-8000-000000000001',
-    '84000000-0000-4000-8000-000000000010',
+    '81000000-0000-4000-8000-000000000001',
     'run', 1, 'decision.opened', '1',
     'settlement-contract:decision-event',
     'worker', 'settlement-contract',
@@ -280,7 +280,7 @@ insert into public.event_stream (
   ),
   (
     '84000000-0000-4000-8000-000000000002',
-    '84000000-0000-4000-8000-000000000010',
+    '81000000-0000-4000-8000-000000000001',
     'run', 2, 'decision.targets_accepted', '1',
     'settlement-contract:submission-event',
     'worker', 'settlement-contract',
@@ -1820,6 +1820,248 @@ select is(
   0::bigint,
   'fail-closed S1 attempts leave no misleading tax settlement state'
 );
+
+select has_table(
+  'public', 'accepted_target_cycle',
+  'one immutable accepted-target cycle artifact closes the Core replay boundary'
+);
+select has_column(
+  'public', 'accepted_target_cycle', 'cycle_sha256',
+  'cycle stores the exact content hash used for replay identity'
+);
+select is(
+  public.get_accepted_target_cycle_readiness(
+    '86000000-0000-4000-8000-000000000001'
+  )->>'status',
+  'READY_FOR_INPUT_BUILD',
+  'a fully bound accepted target exposes the input-build handoff before execution'
+);
+select is(
+  public.get_accepted_target_cycle_readiness(
+    '86000000-0000-4000-8000-000000000001'
+  )->'blockers',
+  '[]'::jsonb,
+  'the input-build handoff has no synthetic downstream blockers'
+);
+
+create temporary table accepted_cycle_request as
+with plan_rows as (
+  select
+    max(engine_plan_fingerprint) filter (where stage = 'S1') as s1_fingerprint,
+    max(engine_plan_fingerprint) filter (where stage = 'S2') as s2_fingerprint,
+    (array_agg(frozen_order_plan_id) filter (where stage = 'S1'))[1] as s1_plan_id,
+    (array_agg(frozen_order_plan_id) filter (where stage = 'S2'))[1] as s2_plan_id
+  from public.frozen_order_plan
+  where decision_id = '86000000-0000-4000-8000-000000000001'
+), core_plans as (
+  select
+    (s1_fingerprint::jsonb || jsonb_build_object(
+      'planFingerprint', s1_fingerprint
+    )) as s1_plan,
+    (s2_fingerprint::jsonb || jsonb_build_object(
+      'planFingerprint', s2_fingerprint
+    )) as s2_plan,
+    s1_plan_id,
+    s2_plan_id
+  from plan_rows
+), cycle_body as (
+  select jsonb_build_object(
+    'schema', 'twofold.accepted_target_cycle/v1',
+    'submissionId', '86000000-0000-4000-8000-000000000003',
+    'decisionId', '86000000-0000-4000-8000-000000000001',
+    's1', jsonb_build_object(
+      'plan', s1_plan,
+      'settlements', (
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'status', 'READY',
+          'intent', jsonb_build_object('stage', 'S1', 'side', 'SELL')
+        )), '[]'::jsonb)
+        from jsonb_array_elements(s1_plan->'orders')
+      ),
+      'nav', jsonb_build_object(
+        'currency', 'USD',
+        'positionMarketValue', '0',
+        'brokerNav', '1000',
+        'taxReserveDeductions', '0',
+        'taxReservedNav', '1000',
+        'liquidationDeductions', '0',
+        'liquidationNav', '1000'
+      )
+    ),
+    's2', jsonb_build_object(
+      'plan', s2_plan,
+      'settlements', (
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'status', 'READY',
+          'intent', jsonb_build_object('stage', 'S2', 'side', 'BUY')
+        )), '[]'::jsonb)
+        from jsonb_array_elements(s2_plan->'orders')
+      )
+    ),
+    'positions', '[]'::jsonb,
+    'ledger', jsonb_build_object(
+      'transactionCount', (
+        select count(*)::text from public.accounting_transaction
+         where strategy_account_id = (
+           select strategy_account_id from public.strategy_account
+            where idempotency_key = 'settlement-contract:account'
+         )
+      ),
+      'balances', '[]'::jsonb,
+      'positions', '[]'::jsonb
+    ),
+    'nav', jsonb_build_object(
+      'currency', 'USD',
+      'positionMarketValue', '0',
+      'brokerNav', '1000',
+      'taxReserveDeductions', '0',
+      'taxReservedNav', '1000',
+      'liquidationDeductions', '0',
+      'liquidationNav', '1000'
+    ),
+    'finalLedgerHead', jsonb_build_object(
+      'sequence', head_sequence::text,
+      'sha256', head_sha256
+    )
+  ) as body, s1_plan_id, s2_plan_id
+  from core_plans
+  cross join public.strategy_ledger_head
+  where strategy_account_id = (
+    select strategy_account_id from public.strategy_account
+     where idempotency_key = 'settlement-contract:account'
+  )
+), exact_bytes as (
+  select body::text as canonical_json,
+         pg_temp.settlement_sha256(body::text) as cycle_sha256,
+         s1_plan_id,
+         s2_plan_id
+  from cycle_body
+)
+select
+  'accepted-cycle-contract:commit'::text as idempotency_key,
+  public.deterministic_uuid_from_sha256(
+    'twofold.accepted_target_cycle/v1', cycle_sha256
+  ) as cycle_id,
+  (select strategy_account_id from public.strategy_account
+    where idempotency_key = 'settlement-contract:account') as strategy_account_id,
+  '81000000-0000-4000-8000-000000000001'::uuid as run_id,
+  '86000000-0000-4000-8000-000000000001'::uuid as decision_id,
+  '86000000-0000-4000-8000-000000000003'::uuid as accepted_submission_id,
+  s1_plan_id,
+  s2_plan_id,
+  canonical_json,
+  cycle_sha256,
+  (select executed_at from settlement_clock) as completed_at,
+  (select max(stream_seq) from public.event_stream
+    where stream_id = '81000000-0000-4000-8000-000000000001') as expected_run_seq,
+  0::bigint as expected_projection_seq,
+  public.deterministic_uuid_from_sha256(
+    'twofold.event.accepted_target_cycle/v1',
+    public.deterministic_uuid_from_sha256(
+      'twofold.accepted_target_cycle/v1', cycle_sha256
+    )::text
+  ) as event_id,
+  'settlement-contract'::text as recorded_by
+from exact_bytes;
+
+create or replace function pg_temp.commit_cycle(p_completed_at timestamptz)
+returns jsonb
+language sql
+volatile
+set search_path = public, extensions, pg_temp
+as $$
+  select public.commit_accepted_target_cycle(
+    idempotency_key, cycle_id, strategy_account_id, run_id, decision_id,
+    accepted_submission_id, s1_plan_id, s2_plan_id, canonical_json,
+    cycle_sha256, p_completed_at, expected_run_seq,
+    expected_projection_seq, event_id, recorded_by
+  )
+  from accepted_cycle_request
+$$;
+
+create temporary table accepted_cycle_commit as
+select pg_temp.commit_cycle(completed_at) as result
+from accepted_cycle_request;
+
+select is(
+  (select result->>'schema' from accepted_cycle_commit),
+  'twofold.accepted_target_cycle_commit_result/v1',
+  'complete cycle commit returns a string-only versioned response'
+);
+select is(
+  (select result->>'sourceStreamSeq' from accepted_cycle_commit),
+  (select (expected_run_seq + 1)::text from accepted_cycle_request),
+  'cycle commit advances the authoritative run stream exactly once'
+);
+select is(
+  public.get_accepted_target_cycle_readiness(
+    '86000000-0000-4000-8000-000000000001'
+  )->>'status',
+  'COMPLETED',
+  'the same readiness boundary becomes completed after atomic cycle commit'
+);
+select is(
+  public.get_accepted_target_cycle_readiness(
+    '86000000-0000-4000-8000-000000000001'
+  )->>'cycleId',
+  (select cycle_id::text from accepted_cycle_request),
+  'completed readiness identifies the exact immutable cycle'
+);
+select ok(
+  (select cycle_canonical_json::jsonb = cycle
+          and cycle_sha256 = pg_temp.settlement_sha256(cycle_canonical_json)
+     from public.accepted_target_cycle),
+  'persisted cycle retains the exact bytes, parsed payload, and content hash'
+);
+select is(
+  (select event_type from public.event_stream
+    where event_id = (select event_id from accepted_cycle_request)),
+  'decision.accepted_target_cycle_completed',
+  'cycle publication appends one causally linked run event'
+);
+select ok(
+  (select state->>'status' = 'COMPLETED'
+          and state#>>'{s1,status}' = 'COMPLETED'
+          and state#>>'{s2,status}' = 'COMPLETED'
+          and state#>>'{ledger,headSequence}' = '3'
+     from public.projection
+    where projection_name = 'dashboard.accepted_target_cycle'
+      and entity_id = '86000000-0000-4000-8000-000000000001'),
+  'decision projection exposes both stages and the replayed ledger head'
+);
+select is(
+  (select state#>>'{nav,taxReservedNav}' from public.projection
+    where projection_name = 'dashboard.accepted_target_cycle'
+      and entity_id = '86000000-0000-4000-8000-000000000001'),
+  '1000',
+  'decision projection exposes the exact tax-reserved NAV string'
+);
+select is(
+  (select pg_temp.commit_cycle(completed_at)->>'cycleId'
+     from accepted_cycle_request),
+  (select result->>'cycleId' from accepted_cycle_commit),
+  'an exact retry returns the original cycle without a second event'
+);
+select throws_ok(
+  $$select pg_temp.commit_cycle(completed_at + interval '1 millisecond')
+      from accepted_cycle_request$$,
+  '23505',
+  'accepted target cycle identity was reused with different content',
+  'a changed retry cannot overwrite the immutable cycle'
+);
+select throws_ok(
+  $$update public.accepted_target_cycle set completed_at = completed_at + interval '1 second'$$,
+  '55000',
+  'accepted_target_cycle is append-only; append a compensating or superseding record instead',
+  'cycle artifacts reject owner mutation'
+);
+set local role service_role;
+select throws_ok(
+  $$select count(*) from public.accepted_target_cycle$$,
+  '42501', null,
+  'service role may commit through the RPC but cannot read the private artifact table directly'
+);
+reset role;
 
 select * from finish();
 rollback;
