@@ -1,3 +1,4 @@
+import { compareCodePoints } from "./canonical-json.js";
 import {
   addDecimals,
   compareDecimals,
@@ -187,7 +188,7 @@ export function validateInitialPortfolioSnapshot(
         `cashBalances[${index}].unsettledCash`,
       ),
     });
-  }).sort((left, right) => left.currency.localeCompare(right.currency));
+  }).sort((left, right) => compareCodePoints(left.currency, right.currency));
 
   const seenLots = new Set<string>();
   const lots = input.lots.map((lot, index): InitialPositionLot => {
@@ -227,8 +228,8 @@ export function validateInitialPortfolioSnapshot(
       currency: currency(lot.currency),
     });
   }).sort((left, right) =>
-    left.acquiredOn.localeCompare(right.acquiredOn)
-    || left.lotId.localeCompare(right.lotId)
+    compareCodePoints(left.acquiredOn, right.acquiredOn)
+    || compareCodePoints(left.lotId, right.lotId)
   ).map((lot, index) => Object.freeze({
     ...lot,
     acquisitionSequence: (index + 1).toString(),
@@ -362,7 +363,7 @@ export function createOpeningLedgerTransactions(input: {
           },
           {
             postingId: `${transactionId}:equity`,
-            accountId: "equity:opening-balance",
+            accountId: "equity.opening_balance",
             accountKind: "EQUITY",
             side: "CREDIT",
             amount,

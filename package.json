@@ -19,7 +19,7 @@
     "smoke:deepseek": "node scripts/smoke-deepseek.mjs",
     "test": "pnpm -r --if-present test",
     "test:e2e:cycle": "pnpm --filter @twofold/core exec vitest run test/decision-cycle.test.ts && pnpm --filter @twofold/worker exec vitest run tests/accepted-target-cycle-readiness-repository.test.ts tests/accepted-target-cycle-repository.test.ts tests/accepted-target-cycle-service.test.ts && pnpm --filter @twofold-lab/dashboard exec vitest run lib/data/accepted-target-cycle-readiness.test.ts lib/data/accepted-target-cycle.test.ts && node scripts/run-remote-pgtap.mjs supabase/tests/paper_fill_settlement_contract.sql",
-    "preflight:db:migration:remote": "node scripts/preflight-remote-migration.mjs supabase/migrations/202608280012_accepted_target_cycle_readiness.sql supabase/tests/paper_fill_settlement_contract.sql",
+    "preflight:db:migration:remote": "node scripts/preflight-remote-migration.mjs supabase/migrations/202608280013_accepted_target_cycle_head_binding.sql supabase/tests/paper_fill_settlement_contract.sql",
     "test:db:migration:remote": "node scripts/run-remote-pgtap.mjs supabase/tests/paper_fill_settlement_contract.sql",
     "test:db:remote": "node scripts/run-remote-pgtap.mjs supabase/tests/control_plane_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/market_data_pipeline_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/arena_decision_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/accounting_kernel_contract.sql && node scripts/run-remote-pgtap.mjs supabase/tests/paper_fill_settlement_contract.sql",
     "typecheck": "pnpm -r --if-present typecheck",

@@ -115,11 +115,22 @@ remains a separate explicit step.
 
 The keyless Core now runs one accepted target through D-close S1 sells, strict
 CNY FIFO tax reserve, S1-close S2 buys, one replayed ledger, and Broker /
-Tax-reserved / Liquidation NAV. The result is byte-stable and content-addressed.
-The Worker registers both frozen plans and commits that exact cycle through one
-idempotent Supabase boundary; Postgres validates identity, hashes, stage/order
-conservation, ledger/NAV invariants, and run-stream CAS before atomically
-publishing the immutable artifact, business event, and decision projection.
+Tax-reserved / Liquidation NAV. The result is byte-stable and content-addressed;
+array order inside the hashed artifact is compared by code point so the content
+address cannot depend on the host's ICU collation.
+
+Tested Worker primitives can register both frozen plans and commit that exact
+cycle through one idempotent Supabase boundary. Postgres validates identity,
+hashes, the plan bytes against the admitted frozen plans, stage/order
+conservation, ledger/NAV invariants, run-stream CAS, and the strategy ledger head
+before atomically publishing the immutable artifact, business event, and decision
+projection. The head is locked, required to match the artifact's opening head,
+advanced exactly once per settlement, and moved to the artifact's final head in
+the same transaction, so two decisions in one run cannot derive from the same
+balances.
+
+These primitives are not wired into the dogfood runtime: nothing in the worker or
+scheduler calls them, so no live path can commit a cycle yet.
 
 The remote database now exposes one atomic settlement boundary for simulated
 S2 USD BUY orders. Under a per-account ledger-head lock it re-derives current
@@ -128,13 +139,20 @@ affordable integer fill and frozen Futu fees, and commits the journal, lot,
 acquisition CNY FX binding, outcome, and next hash-chain head in one transaction.
 Zero-affordable orders become auditable cancellations without a fake fill.
 
-The generic cycle handoff is implemented and tested, but the live dogfood
-scheduler still cannot authorize a real cycle: pre-positioned opening-account
-import, trusted official-auction/FX ingestion, exchange calendars, and a real
-Futu statement remain required. The older per-fill database RPC still supports
-only atomic S2 BUY; S1 is committed as part of the Core-derived replay artifact,
-not misrepresented as a per-fill SQL settlement. Alpaca daily bars are never
-admitted as official execution-price evidence, and no test cycle is retained.
+The generic cycle handoff exists as tested primitives plus a deployed database
+boundary; it is not connected to the live dogfood scheduler, which also cannot
+authorize a real cycle yet: pre-positioned opening-account import, trusted
+official-auction/FX ingestion, exchange calendars, and a real Futu statement
+remain required. The handoff also spans three durable RPCs and is not atomic
+across them, so a crash between plan registration and cycle commit leaves an
+immutable plan that only a byte-identical re-derivation can follow. The older
+per-fill database RPC still supports only atomic S2 BUY; S1 is committed as part
+of the Core-derived replay artifact, not misrepresented as a per-fill SQL
+settlement. Realized tax is an accounting balance in CNY only — the
+trading-currency reserve shown as a NAV deduction is converted at each
+disposition's own rate and is a conservative reserve, not a filed tax figure.
+Alpaca daily bars are never admitted as official execution-price evidence, and no
+test cycle is retained.
 
 For the gated browser contract fixture (development only):
 

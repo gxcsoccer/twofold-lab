@@ -44,7 +44,16 @@ export interface ExecutedAcceptedTargetCycle {
 /**
  * The sole application handoff from an accepted target to durable execution.
  * The Core owns financial derivation; Supabase admits the exact plans and one
- * content-addressed cycle artifact under the run-stream CAS fence.
+ * content-addressed cycle artifact under the run-stream CAS fence and the
+ * strategy ledger-head row lock.
+ *
+ * This spans three durable RPCs and is deliberately NOT atomic across them.
+ * `frozen_order_plan` is immutable and unique per `(decision_id, stage)`, so a
+ * crash after either plan registration commits that plan permanently: recovery
+ * requires re-deriving byte-identical plans from the same frozen inputs, and any
+ * input change strands the decision. Callers must therefore treat the cycle
+ * input as frozen evidence, not as something recomputed at retry time. Folding
+ * all three writes into one RPC is the tracked follow-up; see docs/status.md.
  */
 export async function executeAcceptedTargetCycle(
   client: AcceptedTargetCycleClient,

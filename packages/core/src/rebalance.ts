@@ -32,7 +32,7 @@ import {
   type FifoDispositionResult,
   type ShadowTaxLot,
 } from "./shadow-tax.js";
-import { canonicalFinancialJson } from "./canonical-json.js";
+import { canonicalFinancialJson, compareCodePoints } from "./canonical-json.js";
 
 export interface PortfolioTargetWeight {
   readonly instrumentId: string;
@@ -608,7 +608,7 @@ export function createS1SellOrderPlan(input: {
   const orders: FrozenSellOrder[] = [];
 
   for (const position of [...positions.values()].sort((left, right) =>
-    left.instrumentId.localeCompare(right.instrumentId)
+    compareCodePoints(left.instrumentId, right.instrumentId)
   )) {
     const target = targets.get(position.instrumentId);
     const weightBps = target?.weightBps ?? "0";
@@ -739,7 +739,7 @@ export function createS2BuyOrderPlan(input: {
   }).sort((left, right) => {
     const gapOrder = compareDecimals(right.gap, left.gap);
     return gapOrder === 0
-      ? left.target.instrumentId.localeCompare(right.target.instrumentId)
+      ? compareCodePoints(left.target.instrumentId, right.target.instrumentId)
       : gapOrder;
   });
 
@@ -912,7 +912,7 @@ export function executeS1SellOrders(input: {
   let newlyLockedTax = decimal("0");
 
   for (const order of [...plan.orders].sort((left, right) =>
-    left.instrumentId.localeCompare(right.instrumentId)
+    compareCodePoints(left.instrumentId, right.instrumentId)
   )) {
     requireIdentity(order.orderId, "order.orderId");
     if (seenOrders.has(order.orderId)) throw new TypeError(`Duplicate orderId: ${order.orderId}`);
@@ -1033,7 +1033,7 @@ export function executeS1SellOrders(input: {
     fills: Object.freeze(fills),
     remainingLots: Object.freeze(
       [...lotsByInstrument.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => compareCodePoints(left, right))
         .flatMap(([, lots]) => lots),
     ),
     initialGrossBuyingCash,
@@ -1119,7 +1119,7 @@ export function executeS2BuyOrders(input: {
   const orders = [...plan.orders].sort((left, right) => {
     const priorityOrder = BigInt(left.priority) - BigInt(right.priority);
     if (priorityOrder !== 0n) return priorityOrder < 0n ? -1 : 1;
-    return left.instrumentId.localeCompare(right.instrumentId);
+    return compareCodePoints(left.instrumentId, right.instrumentId);
   });
 
   for (const order of orders) {

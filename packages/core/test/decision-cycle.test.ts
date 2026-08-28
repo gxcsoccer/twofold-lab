@@ -338,6 +338,21 @@ describe("accepted target decision cycle", () => {
     expect(replay.finalLedgerHead).toEqual(first.finalLedgerHead);
   });
 
+  it("pins the content address so ordering can never depend on the host locale", () => {
+    // Comparing two in-process runs cannot catch environment-dependent ordering.
+    // The artifact ID is derived from this digest, so it is a frozen constant:
+    // if a sort inside the cycle starts using ICU collation, or a field is
+    // added/reordered without a schema version bump, this fails.
+    const result = runAcceptedTargetCycle(cycleInput());
+
+    expect(result.contentSha256).toBe(
+      "e888ebbd582ad2fe1469f2fecefe5e75ad9e7f816c075d6dfa07bd338f565920",
+    );
+    expect(result.ledger.balances.map((balance) => balance.accountId)).toEqual(
+      [...result.ledger.balances.map((balance) => balance.accountId)].sort(),
+    );
+  });
+
   it("rejects a submission whose declared weights are not complete", () => {
     const input = cycleInput();
     expect(() => runAcceptedTargetCycle({

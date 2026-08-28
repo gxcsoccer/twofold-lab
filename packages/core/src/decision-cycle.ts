@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { canonicalFinancialJson } from "./canonical-json.js";
+import { canonicalFinancialJson, compareCodePoints } from "./canonical-json.js";
 import { decimal, nonNegativeDecimal, sequence, type DecimalString } from "./decimal.js";
 import type { FutuFeeSchedule } from "./futu-fees.js";
 import {
@@ -366,6 +366,11 @@ export function runAcceptedTargetCycle(
     ...appendedTransactions,
   ]);
   assertProjectionMatchesState(ledger, account, positions, input.account.currency);
+  assertTaxAccrualMatchesSettlements(
+    ledger,
+    replayLedger(input.account.priorLedgerTransactions),
+    s1Settlements,
+  );
   const finalNav = navFor(
     input.account.currency,
     account,
@@ -383,7 +388,7 @@ export function runAcceptedTargetCycle(
         lots: Object.freeze([...position.lots]),
         acquisitionFxBindings: Object.freeze([...position.acquisitionFxBindings]),
       }))
-      .sort((left, right) => left.symbol.localeCompare(right.symbol)),
+      .sort((left, right) => compareCodePoints(left.symbol, right.symbol)),
   );
   const payload = Object.freeze({
     schema: "twofold.accepted_target_cycle/v1" as const,
@@ -742,15 +747,23 @@ function advanceHead(account: MutableAccountState, settlementSha256: string): vo
   }));
 }
 
+function balanceOf(
+  ledger: LedgerProjection,
+  accountId: string,
+  currency: string,
+): DecimalString {
+  return ledger.balances.find(
+    (balance) => balance.accountId === accountId && balance.currency === currency,
+  )?.amount ?? decimal("0");
+}
+
 function assertProjectionMatchesState(
   ledger: LedgerProjection,
   account: MutableAccountState,
   positions: ReadonlyMap<string, MutablePosition>,
   currency: string,
 ): void {
-  const cash = ledger.balances.find(
-    (balance) => balance.accountId === "asset.cash" && balance.currency === currency,
-  )?.amount ?? "0";
+  const cash = balanceOf(ledger, "asset.cash", currency);
   if (cash !== account.cash) {
     throw new Error(`Ledger cash ${cash} differs from cycle cash ${account.cash}`);
   }
@@ -764,6 +777,45 @@ function assertProjectionMatchesState(
         `Ledger position ${position.symbol}=${quantity} differs from cycle state ${position.quantity}`,
       );
     }
+  }
+  // Quantities alone do not prove the cost side reconciles: inventory carries
+  // gross purchase cost, with fees expensed separately.
+  const inventory = balanceOf(ledger, "securities.inventory", currency);
+  const grossCost = sumDecimals(
+    [...positions.values()].map((position) => position.grossCost),
+  );
+  if (inventory !== grossCost) {
+    throw new Error(
+      `Ledger inventory ${inventory} differs from cycle gross cost ${grossCost}`,
+    );
+  }
+}
+
+/**
+ * The realized-tax liability is booked in CNY, while the NAV deduction and the
+ * S2 buying-power fence use the trading-currency reserve converted at each
+ * disposition's own FX rate. The two views therefore cannot be reconciled by any
+ * single rate once a cycle contains sells at different rates, and only the CNY
+ * side is an accounting balance. This asserts the exact side: every CNY the
+ * settlements claim to accrue must appear in the replayed ledger.
+ */
+function assertTaxAccrualMatchesSettlements(
+  ledger: LedgerProjection,
+  priorLedger: LedgerProjection,
+  s1Settlements: readonly ReadyPaperSettlement[],
+): void {
+  const accrued = sumDecimals(
+    s1Settlements.map((settlement) => settlement.intent.tax.chinaCapitalGainsTaxCny),
+  );
+  const expected = addDecimals(
+    balanceOf(priorLedger, "liability.china_tax_accrual", "CNY"),
+    accrued,
+  );
+  const actual = balanceOf(ledger, "liability.china_tax_accrual", "CNY");
+  if (actual !== expected) {
+    throw new Error(
+      `Ledger CNY tax accrual ${actual} differs from settled accrual ${expected}`,
+    );
   }
 }
 

@@ -39,9 +39,11 @@ and runtime scheduling remain required.
 - One logical DeepSeek V4 Pro decision invocation, metered provider steps,
   schema validation, and one format-only repair.
 - Two-stage S1/S2 order generation and deterministic cash-limited fills.
-- Durable Worker handoff that registers both plans and commits one exact cycle
-  artifact is implemented. A deployed causal readiness gate now exposes the
-  first durable seed blocker; input construction, scheduling, and stage-specific
+- Worker handoff primitives that register both plans and commit one exact cycle
+  artifact are implemented and tested, and the database admits the artifact only
+  under the locked strategy ledger head. They are not called by the runtime yet.
+  A deployed causal readiness gate exposes the first durable seed blocker; input
+  construction, scheduling, one atomic handoff RPC, and stage-specific
   real-evidence authorization remain.
 - Stored Harness transcript evidence linked to the Twofold decision event.
 

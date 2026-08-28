@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(96);
+select plan(105);
 
 create or replace function pg_temp.settlement_sha256(p_value text)
 returns text
@@ -1844,6 +1844,50 @@ select is(
   'the input-build handoff has no synthetic downstream blockers'
 );
 
+-- One READY intent per frozen order, each observing the head the previous
+-- settlement produced. The database fences the opening head against the durable
+-- row and the final head against the settlement count; the intermediate hash
+-- chain is a Core invariant covered by the Core suite, so entries after the
+-- first carry deterministic synthetic hashes.
+create or replace function pg_temp.cycle_settlements(
+  p_stage text,
+  p_side text,
+  p_orders jsonb,
+  p_base_sequence bigint,
+  p_base_hash text,
+  p_strategy_account_id uuid,
+  p_run_id uuid
+)
+returns jsonb
+language sql
+stable
+set search_path = public, extensions, pg_temp
+as $$
+  select coalesce(
+    jsonb_agg(jsonb_build_object(
+      'status', 'READY',
+      'intent', jsonb_build_object(
+        'stage', p_stage,
+        'side', p_side,
+        'ledgerHead', jsonb_build_object(
+          'strategyAccountId', p_strategy_account_id::text,
+          'runId', p_run_id::text,
+          'headSequence', (p_base_sequence + entry.ordinality - 1)::text,
+          'headHash', case
+            when entry.ordinality = 1 then p_base_hash
+            else pg_temp.settlement_sha256(
+              'cycle-head:' || (p_base_sequence + entry.ordinality - 1)::text
+            )
+          end
+        )
+      )
+    ) order by entry.ordinality),
+    '[]'::jsonb
+  )
+  from jsonb_array_elements(p_orders)
+    with ordinality as entry(value, ordinality)
+$$;
+
 create temporary table accepted_cycle_request as
 with plan_rows as (
   select
@@ -1871,12 +1915,10 @@ with plan_rows as (
     'decisionId', '86000000-0000-4000-8000-000000000001',
     's1', jsonb_build_object(
       'plan', s1_plan,
-      'settlements', (
-        select coalesce(jsonb_agg(jsonb_build_object(
-          'status', 'READY',
-          'intent', jsonb_build_object('stage', 'S1', 'side', 'SELL')
-        )), '[]'::jsonb)
-        from jsonb_array_elements(s1_plan->'orders')
+      'settlements', pg_temp.cycle_settlements(
+        'S1', 'SELL', s1_plan->'orders',
+        head_sequence, head_sha256,
+        strategy_account_id, '81000000-0000-4000-8000-000000000001'
       ),
       'nav', jsonb_build_object(
         'currency', 'USD',
@@ -1890,12 +1932,15 @@ with plan_rows as (
     ),
     's2', jsonb_build_object(
       'plan', s2_plan,
-      'settlements', (
-        select coalesce(jsonb_agg(jsonb_build_object(
-          'status', 'READY',
-          'intent', jsonb_build_object('stage', 'S2', 'side', 'BUY')
-        )), '[]'::jsonb)
-        from jsonb_array_elements(s2_plan->'orders')
+      'settlements', pg_temp.cycle_settlements(
+        'S2', 'BUY', s2_plan->'orders',
+        head_sequence + jsonb_array_length(s1_plan->'orders'),
+        pg_temp.settlement_sha256(
+          'cycle-head:' || (
+            head_sequence + jsonb_array_length(s1_plan->'orders')
+          )::text
+        ),
+        strategy_account_id, '81000000-0000-4000-8000-000000000001'
       )
     ),
     'positions', '[]'::jsonb,
@@ -1919,9 +1964,20 @@ with plan_rows as (
       'liquidationDeductions', '0',
       'liquidationNav', '1000'
     ),
+    -- The head advances exactly once per settlement across both stages.
     'finalLedgerHead', jsonb_build_object(
-      'sequence', head_sequence::text,
-      'sha256', head_sha256
+      'sequence', (
+        head_sequence
+          + jsonb_array_length(s1_plan->'orders')
+          + jsonb_array_length(s2_plan->'orders')
+      )::text,
+      'sha256', pg_temp.settlement_sha256(
+        'cycle-head:' || (
+          head_sequence
+            + jsonb_array_length(s1_plan->'orders')
+            + jsonb_array_length(s2_plan->'orders')
+        )::text
+      )
     )
   ) as body, s1_plan_id, s2_plan_id
   from core_plans
@@ -1979,9 +2035,129 @@ as $$
   from accepted_cycle_request
 $$;
 
+-- Every rejection branch of the cycle admission boundary, exercised before the
+-- one accepted commit so the idempotency lookup cannot short-circuit them.
+create or replace function pg_temp.commit_mutated_cycle(p_cycle jsonb)
+returns jsonb
+language sql
+volatile
+set search_path = public, extensions, pg_temp
+as $$
+  select public.commit_accepted_target_cycle(
+    'accepted-cycle-contract:rejected',
+    public.deterministic_uuid_from_sha256(
+      'twofold.accepted_target_cycle/v1',
+      pg_temp.settlement_sha256(p_cycle::text)
+    ),
+    strategy_account_id, run_id, decision_id, accepted_submission_id,
+    s1_plan_id, s2_plan_id, p_cycle::text,
+    pg_temp.settlement_sha256(p_cycle::text), completed_at,
+    expected_run_seq, expected_projection_seq,
+    public.deterministic_uuid_from_sha256(
+      'twofold.event.accepted_target_cycle/v1',
+      public.deterministic_uuid_from_sha256(
+        'twofold.accepted_target_cycle/v1',
+        pg_temp.settlement_sha256(p_cycle::text)
+      )::text
+    ),
+    recorded_by
+  )
+  from accepted_cycle_request
+$$;
+
+create or replace function pg_temp.rejected_cycle(p_path text[], p_value jsonb)
+returns jsonb
+language sql
+volatile
+set search_path = public, extensions, pg_temp
+as $$
+  select pg_temp.commit_mutated_cycle(
+    case
+      when p_value is null then (canonical_json::jsonb) #- p_path
+      else jsonb_set(canonical_json::jsonb, p_path, p_value)
+    end
+  )
+  from accepted_cycle_request
+$$;
+
+select throws_ok(
+  $$select pg_temp.rejected_cycle('{s1,plan,orders}', null)$$,
+  '22023',
+  'cycle stage payload must carry both order arrays and settlements',
+  'a plan without an orders array is rejected instead of collapsing the conservation check to NULL'
+);
+select throws_ok(
+  $$select pg_temp.rejected_cycle('{s1,plan,orders,0,quantity}', '"999"'::jsonb)$$,
+  '22023',
+  'cycle plan content diverges from the admitted frozen plan bytes',
+  'a correct planFingerprint cannot smuggle tampered plan orders'
+);
+select throws_ok(
+  $$select pg_temp.commit_mutated_cycle(jsonb_set(
+      canonical_json::jsonb,
+      '{s2,settlements}',
+      (canonical_json::jsonb#>'{s2,settlements}') - 0
+    )) from accepted_cycle_request$$,
+  '22023',
+  'cycle orders and READY settlement intents do not conserve',
+  'dropping one settlement breaks stage conservation'
+);
+select throws_ok(
+  $$select pg_temp.rejected_cycle(
+      '{s1,settlements,0,intent,ledgerHead,strategyAccountId}',
+      '"82000000-0000-4000-8000-000000000001"'::jsonb
+    )$$,
+  '22023',
+  'cycle settlement intents are not bound to this account and run',
+  'a settlement derived against another account cannot be filed under this one'
+);
+select throws_ok(
+  $$select pg_temp.rejected_cycle('{nav,liquidationNav}', '"1"'::jsonb)$$,
+  '22023',
+  'cycle ledger, final head, or NAV invariants are invalid',
+  'a broken NAV subtraction identity is rejected'
+);
+select throws_ok(
+  $$select pg_temp.rejected_cycle(
+      '{s1,settlements,0,intent,ledgerHead,headSequence}', '"2"'::jsonb
+    )$$,
+  '40001',
+  'cycle opening ledger head does not match the durable head',
+  'a cycle derived from a stale ledger head is a CAS conflict, not an admission'
+);
+select throws_ok(
+  $$select pg_temp.rejected_cycle('{finalLedgerHead,sequence}', '"99"'::jsonb)$$,
+  '22023',
+  'cycle final ledger head must advance exactly once per settlement',
+  'the final head cannot skip or invent settlements'
+);
+
 create temporary table accepted_cycle_commit as
 select pg_temp.commit_cycle(completed_at) as result
 from accepted_cycle_request;
+
+select is(
+  (select head_sequence::text || ':' || head_sha256
+     from public.strategy_ledger_head
+    where strategy_account_id = (
+      select strategy_account_id from public.strategy_account
+       where idempotency_key = 'settlement-contract:account'
+    )),
+  (select (canonical_json::jsonb#>>'{finalLedgerHead,sequence}')
+            || ':' || (canonical_json::jsonb#>>'{finalLedgerHead,sha256}')
+     from accepted_cycle_request),
+  'the durable ledger head is advanced to the artifact final head in the same transaction'
+);
+select isnt(
+  (select head_sha256 from public.strategy_ledger_head
+    where strategy_account_id = (
+      select strategy_account_id from public.strategy_account
+       where idempotency_key = 'settlement-contract:account'
+    )),
+  (select canonical_json::jsonb#>>'{s1,settlements,0,intent,ledgerHead,headHash}'
+     from accepted_cycle_request),
+  'the consumed opening head is no longer durable, so no second cycle can spend the same balances'
+);
 
 select is(
   (select result->>'schema' from accepted_cycle_commit),
@@ -2023,7 +2199,7 @@ select ok(
   (select state->>'status' = 'COMPLETED'
           and state#>>'{s1,status}' = 'COMPLETED'
           and state#>>'{s2,status}' = 'COMPLETED'
-          and state#>>'{ledger,headSequence}' = '3'
+          and state#>>'{ledger,headSequence}' = '8'
      from public.projection
     where projection_name = 'dashboard.accepted_target_cycle'
       and entity_id = '86000000-0000-4000-8000-000000000001'),

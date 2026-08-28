@@ -24,17 +24,18 @@ Updated: 2026-08-28.
 - Immutable source-version, Raw artifact, delivery observation, reusable
   daily-bar fact, delivery/fact edge, same-session sealed snapshot, and exact
   snapshot-member provenance with service-role-only RPCs.
-- Dedicated `twofold-lab` Supabase project in Singapore with all eleven
+- Dedicated `twofold-lab` Supabase project in Singapore with all twelve
   migrations applied, including the Arena decision slice, frozen V4 Pro price
   card, exact projection retry, database-arrival submission deadline,
-  accounting kernel, atomic S2 settlement, and UUID-helper hardening.
+  accounting kernel, atomic S2 settlement, and UUID-helper hardening. Migration
+  013 replaces the cycle admission function in place of editing applied history.
 - Real Alpaca SIP ingestion verified for the completed 2026-08-21 session:
   30 daily-bar facts were archived for the lookback window and one sealed
   LULU/QQQ/SPY snapshot was persisted with its private Raw object and exact
   delivery/fact provenance.
 - Remote transactional pgTAP runner that works without local Docker; current
   control-plane, market-data, Arena, accounting, and settlement/cycle contracts
-  pass 19/19, 41/41, 46/46, 92/92, and 92/92 respectively (290/290 total),
+  pass 19/19, 41/41, 46/46, 92/92, and 105/105 respectively (303/303 total),
   including after real market/Agent rows exist.
 - Keyless typecheck, unit-test, production-build, Harness-contract, and profile
   composition checks.
@@ -117,11 +118,34 @@ Updated: 2026-08-28.
   one replayed ledger, final positions, and all three NAVs without another model call.
 - Opening and settlement journals now share the same generic account IDs and
   gross-cost inventory semantics, so one ledger replay covers the whole lifecycle.
-- The Worker registers both frozen plans and commits one exact cycle artifact
-  with deterministic UUIDv8 identity and one byte-identical recovery attempt.
+- Array order inside the hashed artifact is compared by code point, never by
+  `localeCompare`: ICU collation is locale- and version-dependent (it orders
+  `equity:opening-balance` before `equity.opening_balance`), so the content
+  address would otherwise depend on the host runtime. One frozen digest in the
+  Core suite pins this.
+- The Worker primitives register both frozen plans and commit one exact cycle
+  artifact with deterministic UUIDv8 identity and one byte-identical recovery
+  attempt. Nothing in the runtime calls them yet; see "Deliberately not complete".
 - Supabase migration 011 validates the submission/account/plan bindings, exact
   bytes/hash, READY order conservation, ledger/final-head shape, and NAV arithmetic,
   then atomically appends the run event and `dashboard.accepted_target_cycle` projection.
+- Supabase migration 013 closes four gaps in that admission function: both
+  `plan.orders` arrays must exist (a missing key made `jsonb_array_length` return
+  NULL and silently disabled the conservation comparison); the artifact's plan
+  bytes are bound to `engine_plan_fingerprint`, which is the complete canonical
+  plan JSON rather than a label; the strategy ledger head is locked, matched
+  against the artifact's opening head, required to advance exactly once per
+  settlement, and moved to `finalLedgerHead` in the same transaction; and
+  `source_stream_seq` no longer participates in the idempotent-replay identity
+  comparison, so a restarted Worker's byte-identical retry is not misreported as
+  a content conflict. Without the head fence two decisions in one run could each
+  derive from the same balances, because the run-stream CAS orders events only.
+- Realized tax is an accounting balance in CNY only. The trading-currency reserve
+  that feeds the NAV deduction and the S2 buying-power fence is converted at each
+  disposition's own FX rate, so once a cycle sells at more than one rate no single
+  rate reconciles the two views. The cycle asserts the exact side: every CNY the
+  settlements accrue must appear in the replayed `liability.china_tax_accrual`,
+  and inventory must equal the summed gross cost.
 - Supabase migration 012 adds one read-only causal readiness boundary. It reports
   only the first durable blocker (`decision` → accepted submission → strategy
   account → ledger head), `READY_FOR_INPUT_BUILD`, or the exact completed cycle.
@@ -156,9 +180,24 @@ host dogfood slice; the runtime and GUI bullets above are implemented today.
 - The causal seed-readiness gate is deployed, but its Worker input builder and
   durable scheduler wiring still do not load real opening state or authorize
   trusted execution/calendar/FX evidence before invoking the cycle handoff.
+  Concretely: nothing in `worker.ts`, `main.ts`, `dogfood-agent.ts`, or
+  `arena-runtime.ts` calls `executeAcceptedTargetCycle` or
+  `getAcceptedTargetCycleReadiness`, so no runtime path can commit a cycle. The
+  primitives and the database boundary are implemented and tested; the loop is
+  not connected.
+- `executeAcceptedTargetCycle` spans three durable RPCs (register S1, register
+  S2, commit cycle) and is not atomic across them. `frozen_order_plan` is
+  immutable and unique per `(decision_id, stage)`, so a crash after a plan
+  registration commits that plan forever and recovery needs byte-identical
+  re-derivation from the same frozen inputs; changed inputs strand the decision.
+  Folding all three writes into one RPC is the follow-up that removes this.
 - Per-fill SQL S1 settlement remains unsupported by `settle_paper_fill` and still
   fails closed with `0A000`; S1 is currently durable only inside the immutable,
-  Core-derived full-cycle artifact.
+  Core-derived full-cycle artifact. That artifact now advances the shared
+  `strategy_ledger_head`, but it writes no `accounting_transaction`,
+  `position_lot_origin`, or `paper_fill_settlement` rows, so per-posting kernel
+  provenance for cycle settlements lives in the artifact bytes only and the head's
+  kernel row counters deliberately do not move.
 - Exchange-calendar/holiday adjacency and trusted official open/close auction
   facts. Existing Alpaca SIP daily bars have explicitly different semantics.
 - Official, source-hashed Futu fee evidence and account-entitlement snapshot;

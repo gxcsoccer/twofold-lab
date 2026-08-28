@@ -181,8 +181,20 @@ The DeepSeek API key is stored only in the Harness credential store or the worke
 - Formal Season startup still requires holdings tax lots, cash, dates, Skill commits, data providers, broker fee facts, and tax assumptions.
 - Core is the single financial-derivation authority for the accepted-target
   replay cycle. Supabase atomically admits its exact bytes only after both plans
-  exist and verifies identity, content hash, stage/order conservation, NAV
-  arithmetic, and run-stream CAS. The older per-fill SQL boundary remains S2-only.
+  exist and verifies identity, content hash, the artifact plan bytes against the
+  admitted frozen plans, stage/order conservation, NAV arithmetic, run-stream CAS,
+  and the locked strategy ledger head. The head is the balance-derivation fence:
+  run-stream CAS orders events only, so without it two decisions could each
+  derive from the same balances. The older per-fill SQL boundary remains S2-only.
+- Postgres still verifies rather than recomputes. It does not re-derive tax, fees,
+  or NAV, which means the published NAV magnitudes are Core-asserted; the checks
+  it can make independently are identity, exact bytes, durable bindings, the NAV
+  subtraction identities, and the ledger head.
 - S1 Core settlement requires acquisition and disposition USD/CNY evidence and
   applies the frozen strict FIFO tax ruleset; missing evidence fails closed.
   Trusted live ingestion and a real pre-positioned opening account remain absent.
+- Realized capital-gains tax is an accounting balance in CNY. The
+  trading-currency reserve that gates S2 buying power and appears as a NAV
+  deduction is converted at each disposition's own FX rate, so it is a
+  conservative per-disposition reserve and not a filed tax figure; annual netting
+  exists only as a separately labelled sensitivity view.
