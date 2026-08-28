@@ -11,11 +11,14 @@ import {
 import type {
   ArenaAgentNode,
   ArenaAgentUsage,
+  AcceptedTargetCycleReadiness,
+  AcceptedTargetCycleProjection,
   ArenaDecisionPageData,
   ArenaDecisionProjection,
   StatusTone,
 } from "@/lib/data/contracts";
 import {
+  formatCurrency,
   formatDateTime,
   formatInteger,
   formatUsdCost,
@@ -267,6 +270,119 @@ function UnavailableDecision({ data }: { data: ArenaDecisionPageData }) {
   );
 }
 
+export function AcceptedTargetCyclePanel({
+  cycle,
+  readiness = null,
+}: {
+  cycle: AcceptedTargetCycleProjection | null;
+  readiness?: AcceptedTargetCycleReadiness | null;
+}) {
+  if (cycle === null) {
+    const blockerText: Record<AcceptedTargetCycleReadiness["blockers"][number], string> = {
+      DECISION_NOT_FOUND: "找不到该 decision 的不可变调用记录。",
+      ACCEPTED_SUBMISSION_MISSING: "等待唯一、已校验的 accepted target submission。",
+      STRATEGY_ACCOUNT_MISSING: "需要为这个 Strategy Run 注册 paper strategy account。",
+      LEDGER_HEAD_MISSING: "需要导入 opening state，并初始化可验证的 ledger head。",
+    };
+    const ready = readiness?.status === "READY_FOR_INPUT_BUILD";
+    const committed = readiness?.status === "COMPLETED";
+    const blocked = readiness?.status === "BLOCKED";
+    return (
+      <section
+        className="panel"
+        data-testid={blocked
+          ? "accepted-target-cycle-blocked"
+          : ready
+            ? "accepted-target-cycle-input-ready"
+            : "accepted-target-cycle-pending"}
+      >
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="eyebrow">Accepted target → NAV</p>
+            <h2>{blocked
+              ? "执行闭环被前置条件阻塞"
+              : ready
+                ? "基础输入已就绪"
+                : committed
+                  ? "Cycle 已提交，等待投影读取"
+                  : "等待确定性执行闭环"}</h2>
+          </div>
+          <StatusBadge
+            label={readiness?.status ?? "NOT_READY"}
+            tone={ready || committed ? "informative" : "warning"}
+          />
+        </div>
+        <p className="table-note">
+          {ready
+            ? "Worker 现在可以构建确定性 S1 输入；官方开盘价、交易日和 FX 证据仍须在执行前逐项通过。"
+            : committed
+              ? "数据库已确认不可变 cycle；页面尚未取得对应 dashboard projection，不会先行展示 NAV。"
+              : "Accepted submission 只证明目标组合已被接受；在 S1、S2、ledger replay 和 NAV artifact 原子提交前，页面不会把它显示为已成交。"}
+        </p>
+        {readiness?.blockers.map((blocker) => (
+          <div className="readiness-blocker" key={blocker}>
+            <span className="mono">{blocker}</span>
+            <span>{blockerText[blocker]}</span>
+          </div>
+        ))}
+      </section>
+    );
+  }
+
+  const money = (value: string) => cycle.nav.currency === "USD"
+    ? formatCurrency(value)
+    : `${cycle.nav.currency} ${value}`;
+  return (
+    <section className="panel" data-testid="accepted-target-cycle-completed">
+      <div className="section-heading compact-heading">
+        <div>
+          <p className="eyebrow">Accepted target → S1 → S2 → ledger → NAV</p>
+          <h2>确定性执行闭环</h2>
+        </div>
+        <StatusBadge label="已回放验证" tone="positive" />
+      </div>
+      <div className="metrics-grid metrics-grid-three">
+        <MetricCard
+          label="S1 卖出"
+          value={`${formatInteger(cycle.s1.settlementCount)} / ${formatInteger(cycle.s1.orderCount)}`}
+          detail="settlements / orders"
+        />
+        <MetricCard
+          label="S2 买入"
+          value={`${formatInteger(cycle.s2.settlementCount)} / ${formatInteger(cycle.s2.orderCount)}`}
+          detail="settlements / orders"
+        />
+        <MetricCard
+          label="Ledger transactions"
+          value={formatInteger(cycle.ledger.transactionCount)}
+          detail={`head #${formatInteger(cycle.ledger.headSequence)}`}
+        />
+        <MetricCard
+          label="Broker NAV"
+          value={money(cycle.nav.brokerNav)}
+          detail={`持仓市值 ${money(cycle.nav.positionMarketValue)}`}
+        />
+        <MetricCard
+          label="Tax-reserved NAV"
+          value={money(cycle.nav.taxReservedNav)}
+          detail={`税款预留 ${money(cycle.nav.taxReserveDeductions)}`}
+        />
+        <MetricCard
+          label="Liquidation NAV"
+          value={money(cycle.nav.liquidationNav)}
+          detail={`平仓扣减 ${money(cycle.nav.liquidationDeductions)}`}
+        />
+      </div>
+      <dl className="definition-list arena-definition-list">
+        <div><dt>Cycle</dt><dd className="mono">{cycle.cycleId}</dd></div>
+        <div><dt>完成时间</dt><dd>{formatDateTime(cycle.completedAt)}</dd></div>
+        <div><dt>Ledger head</dt><dd className="mono hash-value">{cycle.ledger.headSha256}</dd></div>
+        <div><dt>Artifact SHA-256</dt><dd className="mono hash-value">{cycle.artifactSha256}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
 export function ArenaDecisionView({ initialData }: { initialData: ArenaDecisionPageData }) {
   const data = initialData;
   if (data.status !== "READY" || !data.projection || !data.evidence) {
@@ -331,6 +447,11 @@ export function ArenaDecisionView({ initialData }: { initialData: ArenaDecisionP
           tone={projection.submission.status === "ACCEPTED" ? "positive" : projection.submission.status === "REJECTED" ? "critical" : undefined}
         />
       </section>
+
+      <AcceptedTargetCyclePanel
+        cycle={data.executionCycle}
+        readiness={data.executionReadiness}
+      />
 
       {decision.failureCode || decision.failureMessage ? (
         <section className="panel decision-failure-panel">

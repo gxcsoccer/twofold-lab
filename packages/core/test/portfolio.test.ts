@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { replayLedger } from "../src/ledger.js";
 import {
   createOpeningLedgerTransactions,
   parseInitialPortfolioSnapshot,
@@ -68,10 +69,51 @@ describe("initial portfolio import contract", () => {
       "run-a:opening:lot:later-lot",
     ]);
     expect(transactions[1]?.postings[0]).toMatchObject({
-      amount: "400.99",
+      accountId: "securities.inventory",
+      amount: "400",
       instrumentId: "instrument-lulu",
       quantity: "1",
     });
+    expect(transactions[1]?.postings[1]).toMatchObject({
+      accountId: "expense.broker_fee",
+      amount: "0.99",
+    });
+    expect(transactions[1]?.postings[2]).toMatchObject({
+      accountId: "equity.opening_balance",
+      amount: "400.99",
+    });
+  });
+
+  it("credits non-zero opening cash to the same single opening-equity account", () => {
+    // Regression: opening cash used to credit `equity:opening-balance` while lot
+    // openings credited `equity.opening_balance`, so a run with any cash split
+    // opening equity across two accounts and one replay could not report a
+    // single opening-equity balance.
+    const transactions = createOpeningLedgerTransactions({
+      runId: "run-a",
+      sourceEventId: "event-opening-a",
+      snapshot: snapshot(),
+    });
+    const cashTransaction = transactions.find(
+      (transaction) => transaction.transactionId === "run-a:opening:cash:USD:settled",
+    );
+    expect(cashTransaction?.postings).toMatchObject([
+      { accountId: "asset.cash", side: "DEBIT", amount: "100.01" },
+      { accountId: "equity.opening_balance", side: "CREDIT", amount: "100.01" },
+    ]);
+
+    const equityAccounts = new Set(
+      transactions
+        .flatMap((transaction) => transaction.postings)
+        .filter((posting) => posting.accountKind === "EQUITY")
+        .map((posting) => posting.accountId),
+    );
+    expect([...equityAccounts]).toEqual(["equity.opening_balance"]);
+    expect(
+      replayLedger(transactions).balances.find(
+        (balance) => balance.accountKind === "EQUITY",
+      ),
+    ).toMatchObject({ accountId: "equity.opening_balance", amount: "1102.43" });
   });
 
   it("fails closed on duplicate lots, future acquisitions, and unverifiable sources", () => {

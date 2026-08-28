@@ -1,3 +1,4 @@
+import { compareCodePoints } from "./canonical-json.js";
 import {
   addDecimals,
   compareDecimals,
@@ -187,7 +188,7 @@ export function validateInitialPortfolioSnapshot(
         `cashBalances[${index}].unsettledCash`,
       ),
     });
-  }).sort((left, right) => left.currency.localeCompare(right.currency));
+  }).sort((left, right) => compareCodePoints(left.currency, right.currency));
 
   const seenLots = new Set<string>();
   const lots = input.lots.map((lot, index): InitialPositionLot => {
@@ -227,8 +228,8 @@ export function validateInitialPortfolioSnapshot(
       currency: currency(lot.currency),
     });
   }).sort((left, right) =>
-    left.acquiredOn.localeCompare(right.acquiredOn)
-    || left.lotId.localeCompare(right.lotId)
+    compareCodePoints(left.acquiredOn, right.acquiredOn)
+    || compareCodePoints(left.lotId, right.lotId)
   ).map((lot, index) => Object.freeze({
     ...lot,
     acquisitionSequence: (index + 1).toString(),
@@ -354,7 +355,7 @@ export function createOpeningLedgerTransactions(input: {
         postings: [
           {
             postingId: `${transactionId}:asset`,
-            accountId: `asset:cash:${cashKind}`,
+            accountId: cashKind === "settled" ? "asset.cash" : "asset.cash.unsettled",
             accountKind: "ASSET",
             side: "DEBIT",
             amount,
@@ -362,7 +363,7 @@ export function createOpeningLedgerTransactions(input: {
           },
           {
             postingId: `${transactionId}:equity`,
-            accountId: "equity:opening-balance",
+            accountId: "equity.opening_balance",
             accountKind: "EQUITY",
             side: "CREDIT",
             amount,
@@ -385,17 +386,25 @@ export function createOpeningLedgerTransactions(input: {
       postings: [
         {
           postingId: `${transactionId}:asset`,
-          accountId: `asset:position-cost:${lot.instrumentId}`,
+          accountId: "securities.inventory",
           accountKind: "ASSET",
           side: "DEBIT",
-          amount: lot.taxBasis,
+          amount: lot.grossPurchasePrice,
           currency: lot.currency,
           instrumentId: lot.instrumentId,
           quantity: lot.quantity,
         },
+        ...(lot.buyFees === "0" ? [] : [{
+          postingId: `${transactionId}:fee`,
+          accountId: "expense.broker_fee",
+          accountKind: "EXPENSE" as const,
+          side: "DEBIT" as const,
+          amount: lot.buyFees,
+          currency: lot.currency,
+        }]),
         {
           postingId: `${transactionId}:equity`,
-          accountId: "equity:opening-balance",
+          accountId: "equity.opening_balance",
           accountKind: "EQUITY",
           side: "CREDIT",
           amount: lot.taxBasis,

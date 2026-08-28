@@ -179,6 +179,8 @@ export function createUnavailableArenaDecision(
     status,
     projection: null,
     evidence: null,
+    executionCycle: null,
+    executionReadiness: null,
     issues,
   };
 }

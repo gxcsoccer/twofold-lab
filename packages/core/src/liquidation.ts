@@ -1,3 +1,4 @@
+import { compareCodePoints } from "./canonical-json.js";
 import {
   calculateFutuOrderFees,
   type FutuFeeComponents,
@@ -166,7 +167,7 @@ export function calculatePortfolioLiquidation(input: {
     }));
   }
 
-  assessments.sort((left, right) => left.instrumentId.localeCompare(right.instrumentId));
+  assessments.sort((left, right) => compareCodePoints(left.instrumentId, right.instrumentId));
   return Object.freeze({
     reportingCurrency,
     feeScheduleIds: Object.freeze(

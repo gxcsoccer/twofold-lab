@@ -111,16 +111,26 @@ duplicate lots, unverifiable source hashes, and unbalanced opening entries. It
 is read-only and prints only the source-bound holdings summary; database import
 remains a separate explicit step.
 
-## Deterministic accounting and atomic S2 slice
+## Deterministic accepted-target cycle
 
-The keyless core now includes exact decimal arithmetic, source-bound opening
-portfolio validation, immutable balanced journals with no negative paper
-assets, frozen Futu fee bytes, FIFO shadow-tax calculations, three NAV views,
-Round/Season reducers, and deterministic S1/S2 plan/simulation functions.
-Tested Worker primitives can turn a Core plan into the exact canonical envelope
-admitted by the Supabase accounting contract, register it, initialize/read a
-ledger head, and invoke the exact S2 settlement RPC with one identical recovery
-attempt after an ambiguous or rejected transport outcome.
+The keyless Core now runs one accepted target through D-close S1 sells, strict
+CNY FIFO tax reserve, S1-close S2 buys, one replayed ledger, and Broker /
+Tax-reserved / Liquidation NAV. The result is byte-stable and content-addressed;
+array order inside the hashed artifact is compared by code point so the content
+address cannot depend on the host's ICU collation.
+
+Tested Worker primitives can register both frozen plans and commit that exact
+cycle through one idempotent Supabase boundary. Postgres validates identity,
+hashes, the plan bytes against the admitted frozen plans, stage/order
+conservation, ledger/NAV invariants, run-stream CAS, and the strategy ledger head
+before atomically publishing the immutable artifact, business event, and decision
+projection. The head is locked, required to match the artifact's opening head,
+advanced exactly once per settlement, and moved to the artifact's final head in
+the same transaction, so two decisions in one run cannot derive from the same
+balances.
+
+These primitives are not wired into the dogfood runtime: nothing in the worker or
+scheduler calls them, so no live path can commit a cycle yet.
 
 The remote database now exposes one atomic settlement boundary for simulated
 S2 USD BUY orders. Under a per-account ledger-head lock it re-derives current
@@ -129,12 +139,36 @@ affordable integer fill and frozen Futu fees, and commits the journal, lot,
 acquisition CNY FX binding, outcome, and next hash-chain head in one transaction.
 Zero-affordable orders become auditable cancellations without a fake fill.
 
-This capability is deliberately not wired into the dogfood decision runtime or
-scheduler. S1 SELL/FIFO tax settlement, pre-positioned opening accounts,
-trusted official-auction/FX ingestion, exchange calendars, and a real Futu
-statement remain required. Alpaca daily bars are never admitted as official
-execution-price evidence, and no settlement rows are fabricated to demonstrate
-the new RPC.
+The generic cycle handoff exists as tested primitives plus a deployed database
+boundary; it is not connected to the live dogfood scheduler, which also cannot
+authorize a real cycle yet: pre-positioned opening-account import, trusted
+official-auction/FX ingestion, exchange calendars, and a real Futu statement
+remain required. The handoff also spans three durable RPCs and is not atomic
+across them, so a crash between plan registration and cycle commit leaves an
+immutable plan that only a byte-identical re-derivation can follow. The older
+per-fill database RPC still supports only atomic S2 BUY; S1 is committed as part
+of the Core-derived replay artifact, not misrepresented as a per-fill SQL
+settlement. Realized tax is an accounting balance in CNY only — the
+trading-currency reserve shown as a NAV deduction is converted at each
+disposition's own rate and is a conservative reserve, not a filed tax figure.
+Alpaca daily bars are never admitted as official execution-price evidence, and no
+test cycle is retained.
+
+For the gated browser contract fixture (development only):
+
+```bash
+pnpm dev:e2e
+# open http://127.0.0.1:3211/e2e-test/accepted-target-cycle
+```
+
+Production always returns 404 for this route.
+
+The repeatable backend contract (Core cycle, Worker handoff, Dashboard schema,
+and rollback-only remote Supabase commit) is one command:
+
+```bash
+pnpm test:e2e:cycle
+```
 
 The market-ingestion command requests `LULU,SPY,QQQ` with `timeframe=1Day`, `feed=sip`, and
 `adjustment=raw`; archives the exact response in private content-addressed

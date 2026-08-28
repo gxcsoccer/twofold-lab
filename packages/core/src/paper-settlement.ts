@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { canonicalFinancialJson } from "./canonical-json.js";
+import { canonicalFinancialJson, compareCodePoints } from "./canonical-json.js";
 import {
   currency,
   decimal,
@@ -1059,8 +1059,8 @@ function normalizeExecution(
       priceEvidence: evidence,
     });
   }).sort((left, right) =>
-    left.executedAt.localeCompare(right.executedAt)
-    || left.fillId.localeCompare(right.fillId)
+    compareCodePoints(left.executedAt, right.executedAt)
+    || compareCodePoints(left.fillId, right.fillId)
   );
   if (plan.executionModel === "SIMULATED_SLIPPAGE" && fills.length > 1) {
     const oneOfficialOpenFact = canonicalFinancialJson(fills[0]!.priceEvidence);

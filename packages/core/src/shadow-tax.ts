@@ -1,3 +1,4 @@
+import { compareCodePoints } from "./canonical-json.js";
 import {
   decimal,
   nonNegativeDecimal,
@@ -435,8 +436,8 @@ export function calculateCapitalGainsTaxViews(
   let annualTax = nonNegativeDecimal("0");
   const buckets = [...annualNets.values()]
     .sort((left, right) =>
-      left.taxYear.localeCompare(right.taxYear) ||
-      left.sourceCountry.localeCompare(right.sourceCountry),
+      compareCodePoints(left.taxYear, right.taxYear) ||
+      compareCodePoints(left.sourceCountry, right.sourceCountry),
     )
     .map((bucket): AnnualNettingSensitivityBucket => {
       const taxableGain = asNonNegative(

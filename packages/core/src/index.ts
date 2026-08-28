@@ -1,6 +1,7 @@
 export * from "./control.js";
 export * from "./canonical-json.js";
 export * from "./decimal.js";
+export * from "./decision-cycle.js";
 export * from "./events.js";
 export * from "./fixed-decimal.js";
 export * from "./futu-fees.js";

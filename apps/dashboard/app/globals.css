@@ -1322,6 +1322,22 @@ tbody tr:hover td {
   margin-top: 7px;
 }
 
+.readiness-blocker {
+  display: grid;
+  gap: 5px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-subtle);
+}
+
+.readiness-blocker .mono {
+  color: var(--amber);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
 .decision-failure-panel {
   border-color: #edc7c4;
   background: #fffafa;

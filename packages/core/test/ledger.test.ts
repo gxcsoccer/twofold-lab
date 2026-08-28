@@ -149,6 +149,53 @@ describe("immutable balanced ledger", () => {
     })).toThrow("eventTime must be an ISO UTC timestamp");
   });
 
+  it("orders the projection by code point, not by host ICU collation", () => {
+    // ICU treats punctuation as variable-weight and sorts
+    // `equity:opening-balance` BEFORE `equity.opening_balance`, the reverse of
+    // code point order ('.' 0x2E < ':' 0x3A). This projection is embedded in
+    // content-addressed artifacts, so localeCompare here would make the artifact
+    // hash depend on the runtime's ICU build and CLDR version.
+    const accountIds = ["equity:opening-balance", "equity.opening_balance"];
+    expect(
+      [...accountIds].sort((left, right) => left.localeCompare(right)),
+    ).toEqual(["equity:opening-balance", "equity.opening_balance"]);
+
+    const projection = replayLedger(accountIds.map((accountId, index) =>
+      createLedgerTransaction({
+        transactionId: `tx-${index}`,
+        idempotencyKey: `tx-${index}`,
+        sourceEventId: "event-order",
+        eventTime: "2026-08-24T00:00:00.000Z",
+        effectiveDate: "2026-08-24",
+        description: `Opening credit to ${accountId}`,
+        postings: [
+          {
+            postingId: `tx-${index}:asset`,
+            accountId: "asset.cash",
+            accountKind: "ASSET",
+            side: "DEBIT",
+            amount: "10",
+            currency: "USD",
+          },
+          {
+            postingId: `tx-${index}:equity`,
+            accountId,
+            accountKind: "EQUITY",
+            side: "CREDIT",
+            amount: "10",
+            currency: "USD",
+          },
+        ],
+      })
+    ));
+
+    expect(projection.balances.map((balance) => balance.accountId)).toEqual([
+      "asset.cash",
+      "equity.opening_balance",
+      "equity:opening-balance",
+    ]);
+  });
+
   it("projects normal account balances deterministically", () => {
     const projection = replayLedger([openingCashTransaction(), buyTransaction()]);
     expect(projection.transactionCount).toBe("2");

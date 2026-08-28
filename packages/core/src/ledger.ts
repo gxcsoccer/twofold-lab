@@ -1,3 +1,4 @@
+import { compareCodePoints } from "./canonical-json.js";
 import {
   addDecimals,
   compareDecimals,
@@ -328,19 +329,21 @@ export function replayLedger(
 
   return Object.freeze({
     transactionCount: transactions.length.toString(),
+    // This projection is embedded in content-addressed artifacts, so the order
+    // must be locale-independent.
     balances: Object.freeze(
       [...balances.values()].sort((left, right) => {
-        const accountOrder = left.accountId.localeCompare(right.accountId);
+        const accountOrder = compareCodePoints(left.accountId, right.accountId);
         return accountOrder === 0
-          ? left.currency.localeCompare(right.currency)
+          ? compareCodePoints(left.currency, right.currency)
           : accountOrder;
       }),
     ),
     positions: Object.freeze(
       [...positions.values()].sort((left, right) => {
-        const accountOrder = left.accountId.localeCompare(right.accountId);
+        const accountOrder = compareCodePoints(left.accountId, right.accountId);
         return accountOrder === 0
-          ? left.instrumentId.localeCompare(right.instrumentId)
+          ? compareCodePoints(left.instrumentId, right.instrumentId)
           : accountOrder;
       }),
     ),

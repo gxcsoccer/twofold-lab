@@ -1,4 +1,19 @@
 /**
+ * Total order on UTF-16 code units, matching the `Array.prototype.sort` default
+ * and `Object.keys().sort()` used below.
+ *
+ * Array order inside a canonical manifest is part of the hashed bytes, so it may
+ * never depend on `String.prototype.localeCompare`: that uses the runtime's ICU
+ * collation, which treats punctuation as variable-weight (it orders
+ * `equity:opening-balance` before `equity.opening_balance`, the reverse of code
+ * point order) and is not stable across ICU versions or `--without-intl` builds.
+ * Every sort whose output reaches a content hash must use this comparator.
+ */
+export function compareCodePoints(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
  * Deterministic JSON for financial manifests. Decimal values must already be
  * strings; accepting a JavaScript number here would reintroduce binary-float
  * ambiguity at a hashing/idempotency boundary.
