@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { composeEntries, loadProfile } from "@deepseek-ai/dsh-app-boot";
 import { describe, expect, it } from "vitest";
@@ -8,6 +9,11 @@ import { ARENA_RUNTIME_PACKAGE_NAMES } from
   "../src/arena-runtime-package-manifest.js";
 import { importArenaRuntimePackage } from
   "../src/arena-runtime-package-manifest.js";
+
+const repositoryRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
 
 function packageName(specifier: string): string {
   return specifier.startsWith("@")
@@ -24,7 +30,6 @@ describe("Arena serverless runtime package manifest", () => {
   });
 
   it("covers every active root and preset plugin with an explicit dependency", async () => {
-    const repositoryRoot = process.cwd();
     const installAnchor = resolve(repositoryRoot, "apps/worker/package.json");
     const profile = loadProfile(
       "twofold-arena-worker",

@@ -7,13 +7,19 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { stageArenaRuntimeHome } from
   "../src/arena-agent-decision-handler.js";
 import { createArenaRuntime } from "../src/arena-runtime.js";
+
+const repositoryRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
 
 describe("Arena runtime serverless boot", () => {
   it("boots from a read-only traced profile without creating module symlinks", async () => {
@@ -24,7 +30,7 @@ describe("Arena runtime serverless boot", () => {
     let runtimeRoot: string | undefined;
     mkdirSync(profilesRoot, { recursive: true });
     cpSync(
-      resolve(process.cwd(), "profiles/twofold"),
+      resolve(repositoryRoot, "profiles/twofold"),
       join(profilesRoot, "twofold"),
       { recursive: true },
     );
@@ -37,13 +43,13 @@ describe("Arena runtime serverless boot", () => {
       const runtime = await createArenaRuntime({
         repositoryRoot: stagedRoot,
         workerId: "serverless-boot-test",
-        installAnchor: resolve(process.cwd(), "apps/worker/package.json"),
+        installAnchor: resolve(repositoryRoot, "apps/worker/package.json"),
         profileBundlePatchPaths: [
           resolve(
-            process.cwd(),
+            repositoryRoot,
             "apps/worker/node_modules/@deepseek-ai/dsh-base/cordis.patch.yml",
           ),
-          resolve(process.cwd(), "packages/dsh-twofold/cordis.patch.yml"),
+          resolve(repositoryRoot, "packages/dsh-twofold/cordis.patch.yml"),
         ],
         profileDirectory: resolve(stagedRoot, "profiles/twofold"),
         profileModuleHealing: false,

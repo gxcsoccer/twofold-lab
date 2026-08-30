@@ -627,7 +627,10 @@ reset role;
 -- stage-gated material boundary and rolls the trigger change back.
 alter table public.accepted_target_submission
   disable trigger accepted_target_submission_database_deadline;
-set local role service_role;
+-- Migration 059 deliberately revokes this legacy admission function from the
+-- production service role. Keep the historical fixture owner-only; the active
+-- service path and its evidence requirements are covered by
+-- arena_decision_contract.sql.
 select public.accept_portfolio_targets(
   'arena-round-contract:accepted-target',
   'd7300000-0000-4000-8000-000000000001',
@@ -637,7 +640,6 @@ select public.accept_portfolio_targets(
   '0', 'Keep the entire portfolio in the shared LULU starting asset.',
   '2026-08-28T22:30:00.000Z', 1, 'arena-round-contract'
 );
-reset role;
 alter table public.accepted_target_submission
   enable trigger accepted_target_submission_database_deadline;
 
@@ -2681,6 +2683,16 @@ select ok((
     from public.arena_no_trade_recovery
    where round_entry_id = (select round_entry_id from arena_round_2_fixture)
 ), 'the recovery reason and shared S2 availability time are frozen');
+
+-- The remote contract runs against a live database whose global recovery
+-- queue may contain unrelated rows. Make those rows unavailable only inside
+-- this rollback-only transaction so both claims below are fixture-local.
+select set_config('twofold.arena_no_trade_recovery_mutation', 'on', true);
+update public.arena_no_trade_recovery
+   set next_attempt_at = 'infinity'::timestamptz
+ where status = 'REQUESTED'
+   and round_entry_id <> (select round_entry_id from arena_round_2_fixture);
+select set_config('twofold.arena_no_trade_recovery_mutation', 'off', true);
 
 set local role service_role;
 create temporary table arena_no_trade_early_claim on commit drop as
