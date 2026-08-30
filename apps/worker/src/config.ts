@@ -2,6 +2,7 @@ export interface WorkerConfig {
   readonly workerId: string;
   readonly pollIntervalMs: number;
   readonly leaseSeconds: number;
+  readonly agentLeaseSeconds: number;
   readonly supabaseUrl?: string;
   readonly supabaseSecretKey?: string;
 }
@@ -11,6 +12,18 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function boundedLease(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const parsed = positiveInteger(value, fallback, name);
+  if (parsed < 5 || parsed > 3_600) {
+    throw new Error(`${name} must be between 5 and 3600 seconds`);
   }
   return parsed;
 }
@@ -36,10 +49,15 @@ export function loadWorkerConfig(
       5_000,
       "TWOFOLD_POLL_INTERVAL_MS",
     ),
-    leaseSeconds: positiveInteger(
+    leaseSeconds: boundedLease(
       environment.TWOFOLD_LEASE_SECONDS,
       60,
       "TWOFOLD_LEASE_SECONDS",
+    ),
+    agentLeaseSeconds: boundedLease(
+      environment.TWOFOLD_AGENT_LEASE_SECONDS,
+      environment.VERCEL === "1" ? 780 : 1_800,
+      "TWOFOLD_AGENT_LEASE_SECONDS",
     ),
     ...(supabaseUrl === undefined ? {} : { supabaseUrl }),
     ...(supabaseSecretKey === undefined ? {} : { supabaseSecretKey }),

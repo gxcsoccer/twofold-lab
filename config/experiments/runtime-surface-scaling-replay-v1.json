@@ -1,0 +1,62 @@
+{
+  "spec": {
+    "schema": "twofold.evolution_experiment_spec/v1",
+    "experimentId": "982437ce-99f5-58f7-82bf-79a72d9d23c1",
+    "experimentCode": "runtime-surface-scaling-replay-v1",
+    "mode": "LOCAL_REPLAY",
+    "hypothesis": "Scaling the runtime budget with the frozen 100-symbol decision surface lowers terminal failures.",
+    "sourceFindingSha256s": [
+      "c6e9109e2c85a5704d368fa5cbc781a50f71eaabe74b07d1ab29c03bf4d0f49a"
+    ],
+    "changeSurface": "RUNTIME_BUDGET",
+    "baselineRef": "seasons:private-us-liquid-100-s2+private-us-liquid-100-s3",
+    "treatmentRef": "season:private-us-liquid-100-s4",
+    "primaryMetric": {
+      "metricKey": "agent.decision.terminal_failure_rate",
+      "direction": "LOWER_IS_BETTER",
+      "minimumAbsoluteImprovement": "0.1"
+    },
+    "guardrails": [
+      {
+        "metricKey": "platform.model.estimated_cost_usd_per_decision",
+        "direction": "LOWER_IS_BETTER",
+        "maximumRegression": "0.01"
+      }
+    ],
+    "onlineShadow": null,
+    "expiresAt": "2026-09-30T00:00:00.000Z"
+  },
+  "proposedAt": "2026-08-30T05:00:00.000Z",
+  "scheduledAt": "2026-08-30T05:01:00.000Z",
+  "startedAt": "2026-08-30T05:02:00.000Z",
+  "completedAt": "2026-08-30T05:03:00.000Z",
+  "actorId": "twofold:evolution-local-replay",
+  "trialCode": "runtime-surface-scaling-replay-v1:trial-1",
+  "inputEvidence": {
+    "schema": "twofold.evolution_trial_evidence/v1",
+    "design": "TEMPORAL_HOLDOUT_REPLAY",
+    "expectedOutcome": "Lower terminal failure rate without more than USD 0.01 extra model cost per decision.",
+    "sealedEvidenceRefs": [
+      "season:7a6d3769-b84d-52c6-98f2-5d30056e4a12",
+      "season:0e1e2053-b402-5eb3-b8dc-af0d6227bef5",
+      "season:1486ba8e-47ae-5774-ba44-5c26f9359eeb"
+    ],
+    "marketRegimes": [
+      "2026-08-29-us-close"
+    ],
+    "baselineSamples": "4",
+    "treatmentSamples": "2",
+    "limitation": "Retrospective temporal holdout with a small sample; this is evidence for a candidate, not automatic promotion."
+  },
+  "evaluation": {
+    "baselineValue": "0.5",
+    "treatmentValue": "0",
+    "guardrails": [
+      {
+        "metricKey": "platform.model.estimated_cost_usd_per_decision",
+        "baselineValue": "0.032217933",
+        "treatmentValue": "0.03967249"
+      }
+    ]
+  }
+}

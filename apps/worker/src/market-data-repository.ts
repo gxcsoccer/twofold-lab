@@ -19,6 +19,7 @@ interface DeliveryRow {
 interface SnapshotRow {
   readonly snapshot_id: string;
   readonly manifest_sha256: string;
+  readonly sealed_at: string;
 }
 
 export interface PersistedMarketDelivery {
@@ -26,6 +27,7 @@ export interface PersistedMarketDelivery {
   readonly deliveryId: string;
   readonly snapshotId: string;
   readonly snapshotManifestSha256: string;
+  readonly snapshotAvailableAt: string;
 }
 
 function firstRow<T>(value: unknown, operation: string): T {
@@ -151,6 +153,12 @@ export class SupabaseMarketDataRepository {
       deliveryId: persistedDelivery.delivery_id,
       snapshotId: snapshot.snapshot_id,
       snapshotManifestSha256: snapshot.manifest_sha256,
+      // PostgreSQL keeps microseconds while JavaScript timestamps keep
+      // milliseconds. Advance one millisecond so a Round can never predate
+      // the exact immutable seal instant after precision conversion.
+      snapshotAvailableAt: new Date(
+        Date.parse(snapshot.sealed_at) + 1,
+      ).toISOString(),
     });
   }
 }

@@ -84,6 +84,7 @@ function headResult(overrides: Record<string, unknown> = {}) {
     lotOriginCount: "0",
     acquisitionFxBindingCount: "0",
     settlementCount: "0",
+    corporateActionMutationCount: "0",
     initializedBy: "twofold-worker",
     initializedAt: "2026-08-25T00:00:00.000Z",
     updatedAt: "2026-08-25T00:00:00.000Z",
@@ -312,6 +313,7 @@ describe("paper fill settlement repository", () => {
       lotOriginCount: "1",
       acquisitionFxBindingCount: "1",
       settlementCount: "1",
+      corporateActionMutationCount: "0",
       updatedAt: "2026-08-26T13:30:00.123Z",
     });
     const rpc = vi.fn().mockResolvedValue({ data: head, error: null, status: 200 });

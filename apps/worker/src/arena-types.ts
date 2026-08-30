@@ -110,7 +110,8 @@ export interface ArenaInvocationIdentity {
   bundleArtifactId: string;
   bundleId: string;
   bundleSha256: string;
-  presetId: "twofold-orchestrator";
+  presetId: "twofold" | "twofold-orchestrator";
+  executionClass: "ROOT_ONLY" | "ORCHESTRATED";
   provider: "deepseek-official";
   model: "deepseek-v4-pro";
   decisionAt: string;

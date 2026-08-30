@@ -1,0 +1,99 @@
+{
+  "schema": "twofold.private_controlled_lab_config/v1",
+  "season": {
+    "seasonId": "286387f5-c8b8-5b50-98c5-6cf6027e547f",
+    "seasonCode": "private-controlled-lab-s1",
+    "displayName": "Private Controlled Lab S1",
+    "opensAt": "2026-08-28T21:37:32.616Z",
+    "closesAt": "2026-09-26T00:00:00.000Z",
+    "decisionCadence": "US_EQUITY_DAILY_AFTER_CLOSE",
+    "marketTimezone": "America/New_York",
+    "openingSnapshotId": "2480b451-5c5b-4863-86c8-ec5827926536",
+    "openingSessionDate": "2026-08-28",
+    "openingInstrumentId": "122dd8f9-709a-5652-a27c-a3b5c32755de",
+    "openingSymbol": "LULU",
+    "openingQuantity": "150",
+    "openingHolding": "150 LULU",
+    "openingCash": "0",
+    "genesisId": "private-controlled-lab-s1:lulu-150-v1",
+    "fxSourceUrl": "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml"
+  },
+  "executionRulebook": {
+    "schema": "twofold.arena_execution_rulebook/v1",
+    "executionModel": "SIMULATED_SLIPPAGE",
+    "openReferenceMethod": "ALPACA_SIP_FIRST_MINUTE_OPEN_REFERENCE",
+    "slippageBps": "5",
+    "fillPriceScale": "8",
+    "feeScheduleId": "futu_hk_us_equity_fixed_2026-08-23",
+    "taxRulesetId": "cn_resident_direct_foreign_securities_strict_v1",
+    "taxAllocationScale": "12",
+    "rankingNav": "LIQUIDATION_NAV"
+  },
+  "universe": [
+    {
+      "instrumentId": "122dd8f9-709a-5652-a27c-a3b5c32755de",
+      "symbol": "LULU",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2007-07-27",
+      "issuer": "lululemon athletica inc."
+    },
+    {
+      "instrumentId": "1c198b76-be20-5a0c-87cf-58b0bf1ee36d",
+      "symbol": "QQQ",
+      "instrumentType": "etf",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1999-03-10",
+      "issuer": "Invesco QQQ Trust"
+    },
+    {
+      "instrumentId": "54d15ff2-f446-57d8-981c-453d87497b87",
+      "symbol": "SPY",
+      "instrumentType": "etf",
+      "primaryExchange": "NYSE_ARCA",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1993-01-22",
+      "issuer": "SPDR S&P 500 ETF Trust"
+    }
+  ],
+  "rounds": [
+    {
+      "roundId": "9f96b47b-ae3d-40d3-9a63-52d88ce50bf6",
+      "roundIndex": "1",
+      "decisionSnapshotId": "2480b451-5c5b-4863-86c8-ec5827926536",
+      "decisionSessionDate": "2026-08-28",
+      "decisionWindowOpensAt": "2026-08-28T22:23:53.027Z",
+      "decisionWindowClosesAt": "2026-08-31T13:15:00.000Z",
+      "calendarStartDate": "2026-08-28",
+      "calendarEndDate": "2026-09-03"
+    }
+  ],
+  "entrants": [
+    {
+      "entrantId": "6222a8e6-dc96-48c5-bb1b-0906403fc177",
+      "entrantCode": "twofold",
+      "runId": "ccb09ac5-8779-4aab-a497-d580949617cb",
+      "bundleId": "twofold@0.1.0",
+      "bundleSha256": "7a2ecdef10a51c5c9d0d4235ae32625747b0af9d234ff1ef489536cc7ad7c473",
+      "presetId": "twofold",
+      "provider": "deepseek-official",
+      "model": "deepseek-v4-pro",
+      "executionClass": "ROOT_ONLY",
+      "track": "MAIN_ARENA"
+    },
+    {
+      "entrantId": "b41692bc-04c7-52b8-a946-e7cfcf039444",
+      "entrantCode": "twofold-orchestrator",
+      "runId": "8d94dce8-0b9c-58f0-9427-3c0d45c1962e",
+      "bundleId": "twofold-orchestrator@0.1.0",
+      "bundleSha256": "88d063a0be6c50482201da0c706340c8e33ee273e5b422bd3f357bc0729930aa",
+      "presetId": "twofold-orchestrator",
+      "provider": "deepseek-official",
+      "model": "deepseek-v4-pro",
+      "executionClass": "ORCHESTRATED",
+      "track": "MAIN_ARENA"
+    }
+  ]
+}
