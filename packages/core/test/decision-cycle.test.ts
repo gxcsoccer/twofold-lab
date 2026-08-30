@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  prepareAcceptedTargetCycleS1,
   runAcceptedTargetCycle,
+  settleAcceptedTargetCycleS1AndPrepareS2,
   type AcceptedTargetCycleInput,
 } from "../src/decision-cycle.js";
 import { nonNegativeDecimal, sequence } from "../src/decimal.js";
@@ -260,14 +262,86 @@ function cycleInput(): AcceptedTargetCycleInput {
     slippageBps: "0",
     fillPriceScale: 8,
     taxAllocationScale: 12,
-    liquidation: {
-      estimatedCloseFeesForAllPositions: "0",
-      estimatedUnrealizedLiquidationTax: "0",
-    },
   };
 }
 
 describe("accepted target decision cycle", () => {
+  it("freezes S1 without accepting any future-session execution evidence", () => {
+    const full = cycleInput();
+    const prepared = prepareAcceptedTargetCycleS1({
+      acceptedSubmission: full.acceptedSubmission,
+      account: full.account,
+      timeline: {
+        decisionSessionDate: full.timeline.decisionSessionDate,
+        decisionCutoffAt: full.timeline.decisionCutoffAt,
+        s1PlannedAt: full.timeline.s1PlannedAt,
+        s1TradeDate: full.timeline.s1TradeDate,
+      },
+      instruments: full.instruments.map((instrument) => ({
+        instrumentId: instrument.instrumentId,
+        symbol: instrument.symbol,
+        sourceCountry: instrument.sourceCountry,
+        quantity: instrument.quantity,
+        grossCost: instrument.grossCost,
+        lots: instrument.lots,
+        acquisitionFxBindings: instrument.acquisitionFxBindings,
+        decisionCloseMark: instrument.decisionCloseMark,
+      })),
+      ...(full.feeSchedules === undefined
+        ? {}
+        : { feeSchedules: full.feeSchedules }),
+      slippageBps: full.slippageBps,
+      fillPriceScale: full.fillPriceScale,
+      taxAllocationScale: full.taxAllocationScale,
+    });
+    const completed = runAcceptedTargetCycle(full);
+
+    expect(prepared.plan).toEqual(completed.s1.plan);
+    expect(prepared.schema).toBe("twofold.accepted_target_cycle_s1_plan/v1");
+    expect(prepared.canonicalJson).not.toContain("officialOpenPrice");
+  });
+
+  it("settles S1 and freezes S2 without accepting S2 open or close evidence", () => {
+    const full = cycleInput();
+    const checkpoint = settleAcceptedTargetCycleS1AndPrepareS2({
+      acceptedSubmission: full.acceptedSubmission,
+      account: full.account,
+      timeline: {
+        decisionSessionDate: full.timeline.decisionSessionDate,
+        decisionCutoffAt: full.timeline.decisionCutoffAt,
+        s1PlannedAt: full.timeline.s1PlannedAt,
+        s1TradeDate: full.timeline.s1TradeDate,
+        s1ExecutedAt: full.timeline.s1ExecutedAt,
+        s1SettledAt: full.timeline.s1SettledAt,
+        s1CloseAt: full.timeline.s1CloseAt,
+        s2PlannedAt: full.timeline.s2PlannedAt,
+        s2TradeDate: full.timeline.s2TradeDate,
+      },
+      instruments: full.instruments.map(({ finalMark: _finalMark, ...instrument }) =>
+        instrument
+      ),
+      s1OfficialOpenByInstrument: full.s1OfficialOpenByInstrument,
+      dispositionFxByInstrument: full.dispositionFxByInstrument,
+      ...(full.feeSchedules === undefined
+        ? {}
+        : { feeSchedules: full.feeSchedules }),
+      slippageBps: full.slippageBps,
+      fillPriceScale: full.fillPriceScale,
+      taxAllocationScale: full.taxAllocationScale,
+    });
+    const completed = runAcceptedTargetCycle(full);
+
+    expect(checkpoint.s1).toEqual(completed.s1);
+    expect(checkpoint.s2Plan).toEqual(completed.s2.plan);
+    expect(checkpoint.account).toMatchObject({
+      cashAssetBalance: "1200",
+      buyingPower: "1065",
+      taxReserveBalance: "135",
+      headSequence: "1",
+    });
+    expect(checkpoint.canonicalJson).not.toContain("official-open-qqq");
+  });
+
   it("settles S1 then S2 into one replayable ledger and produces NAV", () => {
     const result = runAcceptedTargetCycle(cycleInput());
 
@@ -325,8 +399,82 @@ describe("accepted target decision cycle", () => {
       brokerNav: "2110",
       taxReserveDeductions: "135",
       taxReservedNav: "1975",
-      liquidationNav: "1975",
+      liquidationDeductions: "102",
+      liquidationNav: "1873",
     });
+  });
+
+  it("carries one frozen minute-participation policy through both stages", () => {
+    const base = cycleInput();
+    const input: AcceptedTargetCycleInput = {
+      ...base,
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+      s1OfficialOpenByInstrument: Object.fromEntries(Object.entries(
+        base.s1OfficialOpenByInstrument,
+      ).map(([instrumentId, evidence]) => [
+        instrumentId,
+        evidence === undefined ? undefined : { ...evidence, observedVolume: "200" },
+      ])),
+      s2OfficialOpenByInstrument: Object.fromEntries(Object.entries(
+        base.s2OfficialOpenByInstrument,
+      ).map(([instrumentId, evidence]) => [
+        instrumentId,
+        evidence === undefined ? undefined : { ...evidence, observedVolume: "100" },
+      ])),
+    };
+
+    const result = runAcceptedTargetCycle(input);
+
+    expect(result.s1.plan).toMatchObject({
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+    });
+    expect(result.s1.settlements[0]?.intent.execution).toMatchObject({
+      terminalStatus: "PARTIALLY_FILLED",
+      filledQuantity: "2",
+      canceledQuantity: "4",
+    });
+    expect(result.s2.plan).toMatchObject({
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+    });
+    expect(result.s2.settlements[0]?.intent.execution).toMatchObject({
+      terminalStatus: "PARTIALLY_FILLED",
+      filledQuantity: "1",
+    });
+  });
+
+  it("records a zero-volume cancellation without inventing a fill or fee", () => {
+    const base = cycleInput();
+    const result = runAcceptedTargetCycle({
+      ...base,
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+      s1OfficialOpenByInstrument: Object.fromEntries(Object.entries(
+        base.s1OfficialOpenByInstrument,
+      ).map(([instrumentId, evidence]) => [
+        instrumentId,
+        evidence === undefined ? undefined : { ...evidence, observedVolume: "0" },
+      ])),
+      s2OfficialOpenByInstrument: Object.fromEntries(Object.entries(
+        base.s2OfficialOpenByInstrument,
+      ).map(([instrumentId, evidence]) => [
+        instrumentId,
+        evidence === undefined
+          ? undefined
+          : { ...evidence, observedVolume: "100000" },
+      ])),
+    });
+
+    expect(result.s1.settlements[0]?.intent.execution).toMatchObject({
+      terminalStatus: "CANCELED",
+      filledQuantity: "0",
+      canceledQuantity: "6",
+      fills: [],
+      liquidityEvidence: { observedVolume: "0", maxParticipationBps: "100" },
+    });
+    expect(result.s1.settlements[0]?.intent.fee.total).toBe("0");
   });
 
   it("is byte- and hash-stable across exact replay", () => {
@@ -346,7 +494,7 @@ describe("accepted target decision cycle", () => {
     const result = runAcceptedTargetCycle(cycleInput());
 
     expect(result.contentSha256).toBe(
-      "e888ebbd582ad2fe1469f2fecefe5e75ad9e7f816c075d6dfa07bd338f565920",
+      "8f6467437d759a6a76ccb8d34f3301340f59ea55122aeb9077260111558dc236",
     );
     expect(result.ledger.balances.map((balance) => balance.accountId)).toEqual(
       [...result.ledger.balances.map((balance) => balance.accountId)].sort(),

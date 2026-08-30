@@ -37,6 +37,7 @@ export interface StrategyLedgerHeadResult {
   readonly lotOriginCount: string;
   readonly acquisitionFxBindingCount: string;
   readonly settlementCount: string;
+  readonly corporateActionMutationCount: string;
   readonly initializedBy: string;
   readonly initializedAt: string;
   readonly updatedAt: string;
@@ -472,6 +473,7 @@ function parseStrategyLedgerHeadResult(
     "lotOriginCount",
     "acquisitionFxBindingCount",
     "settlementCount",
+    "corporateActionMutationCount",
     "initializedBy",
     "initializedAt",
     "updatedAt",
@@ -497,12 +499,17 @@ function parseStrategyLedgerHeadResult(
       "acquisitionFxBindingCount",
     ),
     settlementCount: requiredNonNegativeInteger(record, "settlementCount"),
+    corporateActionMutationCount: requiredNonNegativeInteger(
+      record,
+      "corporateActionMutationCount",
+    ),
     initializedBy: requiredString(record, "initializedBy"),
     initializedAt: requiredTimestamp(record, "initializedAt"),
     updatedAt: requiredTimestamp(record, "updatedAt"),
   });
-  if (parsed.headSequence !== parsed.settlementCount) {
-    throw new TypeError(`${field} sequence does not match settlement count`);
+  if (BigInt(parsed.headSequence) !== BigInt(parsed.settlementCount)
+    + BigInt(parsed.corporateActionMutationCount)) {
+    throw new TypeError(`${field} sequence does not match ledger mutation counts`);
   }
   if (BigInt(parsed.accountingTransactionCount) < 1n) {
     throw new TypeError(`${field} must include the opening accounting transaction`);
@@ -517,7 +524,7 @@ function parseStrategyLedgerHeadResult(
   ) {
     throw new TypeError(`${field} integrity counters do not describe v1 S2 settlement`);
   }
-  if ((parsed.headSequence === "0") !== (parsed.lastSettlementId === null)) {
+  if ((parsed.settlementCount === "0") !== (parsed.lastSettlementId === null)) {
     throw new TypeError(`${field} last settlement identity is inconsistent`);
   }
   if (Date.parse(parsed.updatedAt) < Date.parse(parsed.initializedAt)) {

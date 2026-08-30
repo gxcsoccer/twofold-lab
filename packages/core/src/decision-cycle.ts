@@ -11,6 +11,7 @@ import {
   sumDecimals,
 } from "./fixed-decimal.js";
 import { replayLedger, type LedgerProjection, type LedgerTransaction } from "./ledger.js";
+import { calculatePortfolioLiquidation } from "./liquidation.js";
 import { calculateNavSnapshot, type NavSnapshot } from "./nav-round.js";
 import {
   createPaperOrderSettlement,
@@ -20,6 +21,8 @@ import {
   type PaperSettlementIntent,
   type PaperOrderSettlementResult,
   type SimulatedSlippageFillPriceEvidence,
+  type SimulatedMinuteParticipationFillPriceEvidence,
+  type MinuteParticipationLiquidityEvidence,
 } from "./paper-settlement.js";
 import {
   applySimulatedSlippage,
@@ -28,8 +31,10 @@ import {
   executeS2BuyOrders,
   type BuyOrderPlan,
   type MarketPriceEvidence,
+  type OrderExecutionModel,
   type SellOrderPlan,
 } from "./rebalance.js";
+import { calculateVolumeParticipationLimit } from "./execution-liquidity.js";
 import type { ShadowTaxLot } from "./shadow-tax.js";
 
 const INTEGER_PATTERN = /^(?:0|[1-9]\d*)$/;
@@ -58,6 +63,7 @@ export interface CycleOfficialOpenEvidence {
   readonly snapshotId: string;
   readonly sessionDate: string;
   readonly value: string;
+  readonly observedVolume?: string;
 }
 
 export interface AcceptedTargetCycleInstrument {
@@ -106,12 +112,10 @@ export interface AcceptedTargetCycleInput {
   readonly acquisitionFxByInstrument: Readonly<Record<string, CnyFxEvidence | undefined>>;
   readonly feeSchedules?: readonly FutuFeeSchedule[];
   readonly slippageBps: string;
+  readonly executionModel?: OrderExecutionModel;
+  readonly maxParticipationBps?: string;
   readonly fillPriceScale: number;
   readonly taxAllocationScale: number;
-  readonly liquidation: {
-    readonly estimatedCloseFeesForAllPositions: string;
-    readonly estimatedUnrealizedLiquidationTax: string;
-  };
 }
 
 export interface AcceptedTargetCyclePosition {
@@ -147,6 +151,84 @@ export interface AcceptedTargetCycleResult {
   readonly contentSha256: string;
 }
 
+export type AcceptedTargetCycleS1PlanInput = Readonly<{
+  acceptedSubmission: AcceptedTargetCycleInput["acceptedSubmission"];
+  account: AcceptedTargetCycleInput["account"];
+  timeline: Pick<
+    AcceptedTargetCycleInput["timeline"],
+    "decisionSessionDate" | "decisionCutoffAt" | "s1PlannedAt" | "s1TradeDate"
+  >;
+  instruments: readonly (Omit<
+    AcceptedTargetCycleInstrument,
+    "s1CloseMark" | "finalMark"
+  >)[];
+  feeSchedules?: readonly FutuFeeSchedule[];
+  slippageBps: string;
+  executionModel?: OrderExecutionModel;
+  maxParticipationBps?: string;
+  fillPriceScale: number;
+  taxAllocationScale: number;
+}>;
+
+export type AcceptedTargetCycleThroughS1Input = Readonly<{
+  acceptedSubmission: AcceptedTargetCycleInput["acceptedSubmission"];
+  account: AcceptedTargetCycleInput["account"];
+  timeline: Pick<
+    AcceptedTargetCycleInput["timeline"],
+    | "decisionSessionDate"
+    | "decisionCutoffAt"
+    | "s1PlannedAt"
+    | "s1TradeDate"
+    | "s1ExecutedAt"
+    | "s1SettledAt"
+    | "s1CloseAt"
+    | "s2PlannedAt"
+    | "s2TradeDate"
+  >;
+  instruments: readonly (Omit<AcceptedTargetCycleInstrument, "finalMark">)[];
+  s1OfficialOpenByInstrument: AcceptedTargetCycleInput["s1OfficialOpenByInstrument"];
+  dispositionFxByInstrument: AcceptedTargetCycleInput["dispositionFxByInstrument"];
+  feeSchedules?: readonly FutuFeeSchedule[];
+  slippageBps: string;
+  executionModel?: OrderExecutionModel;
+  maxParticipationBps?: string;
+  fillPriceScale: number;
+  taxAllocationScale: number;
+}>;
+
+export interface AcceptedTargetCycleS1PlanResult {
+  readonly schema: "twofold.accepted_target_cycle_s1_plan/v1";
+  readonly submissionId: string;
+  readonly decisionId: string;
+  readonly plan: SellOrderPlan;
+  readonly decisionCloseNav: NavSnapshot;
+  readonly canonicalJson: string;
+  readonly contentSha256: string;
+}
+
+export interface AcceptedTargetCycleS1Checkpoint {
+  readonly schema: "twofold.accepted_target_cycle_s1_checkpoint/v1";
+  readonly submissionId: string;
+  readonly decisionId: string;
+  readonly s1: {
+    readonly plan: SellOrderPlan;
+    readonly settlements: readonly ReadyPaperSettlement[];
+    readonly nav: NavSnapshot;
+  };
+  readonly s2Plan: BuyOrderPlan;
+  readonly positions: readonly AcceptedTargetCyclePosition[];
+  readonly ledger: LedgerProjection;
+  readonly account: {
+    readonly cashAssetBalance: DecimalString;
+    readonly buyingPower: DecimalString;
+    readonly taxReserveBalance: DecimalString;
+    readonly headSequence: string;
+    readonly headHash: string;
+  };
+  readonly canonicalJson: string;
+  readonly contentSha256: string;
+}
+
 type ReadyPaperSettlement = Extract<PaperOrderSettlementResult, { status: "READY" }>;
 
 interface MutablePosition {
@@ -157,9 +239,6 @@ interface MutablePosition {
   grossCost: DecimalString;
   lots: ShadowTaxLot[];
   acquisitionFxBindings: LotAcquisitionFxBinding[];
-  decisionCloseMark: MarketPriceEvidence;
-  s1CloseMark: MarketPriceEvidence;
-  finalMark: MarketPriceEvidence;
 }
 
 interface MutableAccountState {
@@ -168,6 +247,22 @@ interface MutableAccountState {
   taxReserve: DecimalString;
   headSequence: bigint;
   headHash: string;
+}
+
+interface DerivedS1PlanState {
+  readonly positions: Map<string, MutablePosition>;
+  readonly targets: ReturnType<typeof normalizeTargets>;
+  readonly account: MutableAccountState;
+  readonly decisionCloseNav: NavSnapshot;
+  readonly s1Plan: SellOrderPlan;
+}
+
+interface DerivedThroughS1State extends DerivedS1PlanState {
+  readonly s1Settlements: ReadyPaperSettlement[];
+  readonly appendedTransactions: LedgerTransaction[];
+  readonly s1Nav: NavSnapshot;
+  readonly s2Plan: BuyOrderPlan;
+  readonly ledger: LedgerProjection;
 }
 
 /**
@@ -179,123 +274,16 @@ interface MutableAccountState {
 export function runAcceptedTargetCycle(
   input: AcceptedTargetCycleInput,
 ): AcceptedTargetCycleResult {
-  validateInput(input);
-  const positions = initializePositions(input.instruments);
-  const targets = normalizeTargets(input.acceptedSubmission, positions);
-  const account: MutableAccountState = {
-    cash: decimal(input.account.cashAssetBalance),
-    buyingPower: subtractDecimals(
-      input.account.cashAssetBalance,
-      input.account.taxReserveBalance,
-    ),
-    taxReserve: decimal(input.account.taxReserveBalance),
-    headSequence: BigInt(input.account.headSequence),
-    headHash: input.account.headHash,
-  };
-  if (compareDecimals(account.buyingPower, "0") < 0) {
-    throw new RangeError("Initial tax reserve cannot exceed cash");
-  }
-
-  const decisionCloseNav = navFor(
-    input.account.currency,
+  const throughS1 = deriveThroughS1(input);
+  const {
     account,
     positions,
-    "decisionCloseMark",
-    input.liquidation,
-  );
-  const s1Plan = createS1SellOrderPlan({
-    decisionId: input.acceptedSubmission.decisionId,
-    decisionSessionDate: input.timeline.decisionSessionDate,
-    decisionCutoffAt: input.timeline.decisionCutoffAt,
-    plannedAt: input.timeline.s1PlannedAt,
-    s1TradeDate: input.timeline.s1TradeDate,
-    decisionCloseTaxReservedNav: decisionCloseNav.taxReservedNav,
-    positions: [...positions.values()].map((position) => ({
-      instrumentId: position.instrumentId,
-      symbol: position.symbol,
-      quantity: position.quantity,
-      mark: position.decisionCloseMark,
-    })),
-    targets,
-    cashWeightBps: input.acceptedSubmission.cashWeightBps,
-    slippageBps: input.slippageBps,
-    fillPriceScale: input.fillPriceScale,
-    taxAllocationScale: input.taxAllocationScale,
-    ...(input.feeSchedules === undefined ? {} : { feeSchedules: input.feeSchedules }),
-  });
-
-  const appendedTransactions: LedgerTransaction[] = [];
-  const s1Settlements: ReadyPaperSettlement[] = [];
-  for (const order of s1Plan.orders) {
-    const position = positions.get(order.instrumentId)!;
-    const open = requiredOpen(
-      input.s1OfficialOpenByInstrument,
-      order.instrumentId,
-      input.timeline.s1TradeDate,
-      "S1",
-    );
-    const execution = fullExecution(
-      order,
-      open,
-      input.timeline.s1ExecutedAt,
-      Number(s1Plan.fillPriceScale),
-      s1Plan.slippageBps,
-    );
-    const dispositionFxEvidence = input.dispositionFxByInstrument[order.instrumentId];
-    const result = createPaperOrderSettlement({
-      plan: s1Plan,
-      orderId: order.orderId,
-      execution,
-      settledAt: input.timeline.s1SettledAt,
-      ledgerHead: ledgerHead(input, account, position, "S1"),
-      availableLots: position.lots,
-      sourceCountry: position.sourceCountry,
-      ...(dispositionFxEvidence === undefined ? {} : { dispositionFxEvidence }),
-      acquisitionFxEvidence: position.acquisitionFxBindings,
-    });
-    if (result.status !== "READY") {
-      throw new Error(`S1 settlement unresolved: ${result.unresolved.reason}`);
-    }
-    applySettlement(account, position, result.intent);
-    position.acquisitionFxBindings = remainingAcquisitionBindings(
-      position.acquisitionFxBindings,
-      result.intent,
-    );
-    advanceHead(account, result.contentSha256);
-    s1Settlements.push(result);
-    appendedTransactions.push(...result.intent.ledgerTransactions);
-  }
-
-  const s1Nav = navFor(
-    input.account.currency,
-    account,
-    positions,
-    "s1CloseMark",
-    input.liquidation,
-  );
-  const s2Plan = createS2BuyOrderPlan({
-    decisionId: input.acceptedSubmission.decisionId,
-    s1SessionDate: input.timeline.s1TradeDate,
-    plannedAt: input.timeline.s2PlannedAt,
-    s2TradeDate: input.timeline.s2TradeDate,
-    preOrderTaxReservedNav: s1Nav.taxReservedNav,
-    buyingPowerEvidence: {
-      value: account.buyingPower,
-      snapshotId: `${input.acceptedSubmission.decisionId}:s1-close-ledger`,
-      visibleAt: input.timeline.s1CloseAt,
-    },
-    positions: [...positions.values()].map((position) => ({
-      instrumentId: position.instrumentId,
-      symbol: position.symbol,
-      quantity: position.quantity,
-      mark: position.s1CloseMark,
-    })),
-    targets,
-    cashWeightBps: input.acceptedSubmission.cashWeightBps,
-    slippageBps: input.slippageBps,
-    fillPriceScale: input.fillPriceScale,
-    ...(input.feeSchedules === undefined ? {} : { feeSchedules: input.feeSchedules }),
-  });
+    s1Plan,
+    s1Settlements,
+    s1Nav,
+    s2Plan,
+    appendedTransactions,
+  } = throughS1;
   const s2Execution = executeS2BuyOrders({
     plan: s2Plan,
     tradeDate: input.timeline.s2TradeDate,
@@ -326,8 +314,7 @@ export function runAcceptedTargetCycle(
       fill,
       open,
       input.timeline.s2ExecutedAt,
-      s2Plan.slippageBps,
-      s2Plan.fillPriceScale,
+      s2Plan,
     );
     const acquisitionFxEvidence = input.acquisitionFxByInstrument[order.instrumentId];
     const result = createPaperOrderSettlement({
@@ -335,7 +322,13 @@ export function runAcceptedTargetCycle(
       orderId: order.orderId,
       execution,
       settledAt: input.timeline.s2SettledAt,
-      ledgerHead: ledgerHead(input, account, position, "S2"),
+      ledgerHead: ledgerHead({
+        strategyAccountId: input.account.strategyAccountId,
+        runId: input.account.runId,
+        decisionId: input.acceptedSubmission.decisionId,
+        currency: input.account.currency,
+        capturedAt: input.timeline.s2ExecutedAt,
+      }, account, position),
       planCashFence: {
         planFingerprint: s2Plan.planFingerprint,
         remainingBuyingPower: frozenRemainingBuyingPower,
@@ -375,21 +368,10 @@ export function runAcceptedTargetCycle(
     input.account.currency,
     account,
     positions,
-    "finalMark",
-    input.liquidation,
+    markMap(input.instruments, "finalMark"),
+    input.feeSchedules,
   );
-  const finalPositions = Object.freeze(
-    [...positions.values()]
-      .map((position): AcceptedTargetCyclePosition => Object.freeze({
-        instrumentId: position.instrumentId,
-        symbol: position.symbol,
-        quantity: position.quantity,
-        grossCost: position.grossCost,
-        lots: Object.freeze([...position.lots]),
-        acquisitionFxBindings: Object.freeze([...position.acquisitionFxBindings]),
-      }))
-      .sort((left, right) => compareCodePoints(left.symbol, right.symbol)),
-  );
+  const finalPositions = frozenPositions(positions);
   const payload = Object.freeze({
     schema: "twofold.accepted_target_cycle/v1" as const,
     submissionId: input.acceptedSubmission.submissionId,
@@ -419,7 +401,227 @@ export function runAcceptedTargetCycle(
   });
 }
 
-function validateInput(input: AcceptedTargetCycleInput): void {
+/** Freeze the only order set allowed to reach S1 before any S1 market evidence exists. */
+export function prepareAcceptedTargetCycleS1(
+  input: AcceptedTargetCycleS1PlanInput,
+): AcceptedTargetCycleS1PlanResult {
+  const derived = deriveS1Plan(input);
+  const payload = Object.freeze({
+    schema: "twofold.accepted_target_cycle_s1_plan/v1" as const,
+    submissionId: input.acceptedSubmission.submissionId,
+    decisionId: input.acceptedSubmission.decisionId,
+    plan: derived.s1Plan,
+    decisionCloseNav: derived.decisionCloseNav,
+  });
+  const canonicalJson = canonicalFinancialJson(payload);
+  return Object.freeze({
+    ...payload,
+    canonicalJson,
+    contentSha256: sha256(canonicalJson),
+  });
+}
+
+/**
+ * Settle S1 only after its open and close/FX evidence is visible, then derive
+ * the S2 order set. The returned checkpoint is the pre-S2 durable replay
+ * boundary; no S2 execution input is accepted here.
+ */
+export function settleAcceptedTargetCycleS1AndPrepareS2(
+  input: AcceptedTargetCycleThroughS1Input,
+): AcceptedTargetCycleS1Checkpoint {
+  const derived = deriveThroughS1(input);
+  const payload = Object.freeze({
+    schema: "twofold.accepted_target_cycle_s1_checkpoint/v1" as const,
+    submissionId: input.acceptedSubmission.submissionId,
+    decisionId: input.acceptedSubmission.decisionId,
+    s1: Object.freeze({
+      plan: derived.s1Plan,
+      settlements: Object.freeze([...derived.s1Settlements]),
+      nav: derived.s1Nav,
+    }),
+    s2Plan: derived.s2Plan,
+    positions: frozenPositions(derived.positions),
+    ledger: derived.ledger,
+    account: Object.freeze({
+      cashAssetBalance: derived.account.cash,
+      buyingPower: derived.account.buyingPower,
+      taxReserveBalance: derived.account.taxReserve,
+      headSequence: derived.account.headSequence.toString(),
+      headHash: derived.account.headHash,
+    }),
+  });
+  const canonicalJson = canonicalFinancialJson(payload);
+  return Object.freeze({
+    ...payload,
+    canonicalJson,
+    contentSha256: sha256(canonicalJson),
+  });
+}
+
+function deriveS1Plan(input: AcceptedTargetCycleS1PlanInput): DerivedS1PlanState {
+  validateInput(input);
+  const positions = initializePositions(input.instruments);
+  const targets = normalizeTargets(input.acceptedSubmission, positions);
+  const account: MutableAccountState = {
+    cash: decimal(input.account.cashAssetBalance),
+    buyingPower: subtractDecimals(
+      input.account.cashAssetBalance,
+      input.account.taxReserveBalance,
+    ),
+    taxReserve: decimal(input.account.taxReserveBalance),
+    headSequence: BigInt(input.account.headSequence),
+    headHash: input.account.headHash,
+  };
+  if (compareDecimals(account.buyingPower, "0") < 0) {
+    throw new RangeError("Initial tax reserve cannot exceed cash");
+  }
+  const decisionMarks = markMap(input.instruments, "decisionCloseMark");
+  const decisionCloseNav = navFor(
+    input.account.currency,
+    account,
+    positions,
+    decisionMarks,
+    input.feeSchedules,
+  );
+  const s1Plan = createS1SellOrderPlan({
+    decisionId: input.acceptedSubmission.decisionId,
+    decisionSessionDate: input.timeline.decisionSessionDate,
+    decisionCutoffAt: input.timeline.decisionCutoffAt,
+    plannedAt: input.timeline.s1PlannedAt,
+    s1TradeDate: input.timeline.s1TradeDate,
+    decisionCloseTaxReservedNav: decisionCloseNav.taxReservedNav,
+    positions: [...positions.values()].map((position) => ({
+      instrumentId: position.instrumentId,
+      symbol: position.symbol,
+      quantity: position.quantity,
+      mark: requiredMark(decisionMarks, position.instrumentId),
+    })),
+    targets,
+    cashWeightBps: input.acceptedSubmission.cashWeightBps,
+    slippageBps: input.slippageBps,
+    ...(input.executionModel === undefined
+      ? {}
+      : { executionModel: input.executionModel }),
+    ...(input.maxParticipationBps === undefined
+      ? {}
+      : { maxParticipationBps: input.maxParticipationBps }),
+    fillPriceScale: input.fillPriceScale,
+    taxAllocationScale: input.taxAllocationScale,
+    ...(input.feeSchedules === undefined ? {} : { feeSchedules: input.feeSchedules }),
+  });
+  return { positions, targets, account, decisionCloseNav, s1Plan };
+}
+
+function deriveThroughS1(
+  input: AcceptedTargetCycleThroughS1Input,
+): DerivedThroughS1State {
+  const derived = deriveS1Plan(input);
+  const { positions, account, s1Plan } = derived;
+  const appendedTransactions: LedgerTransaction[] = [];
+  const s1Settlements: ReadyPaperSettlement[] = [];
+  for (const order of s1Plan.orders) {
+    const position = positions.get(order.instrumentId)!;
+    const open = requiredOpen(
+      input.s1OfficialOpenByInstrument,
+      order.instrumentId,
+      input.timeline.s1TradeDate,
+      "S1",
+    );
+    const execution = executionFromSellOrder(
+      order,
+      open,
+      input.timeline.s1ExecutedAt,
+      s1Plan,
+    );
+    const dispositionFxEvidence = input.dispositionFxByInstrument[order.instrumentId];
+    const result = createPaperOrderSettlement({
+      plan: s1Plan,
+      orderId: order.orderId,
+      execution,
+      settledAt: input.timeline.s1SettledAt,
+      ledgerHead: ledgerHead({
+        strategyAccountId: input.account.strategyAccountId,
+        runId: input.account.runId,
+        decisionId: input.acceptedSubmission.decisionId,
+        currency: input.account.currency,
+        capturedAt: input.timeline.s1ExecutedAt,
+      }, account, position),
+      availableLots: position.lots,
+      sourceCountry: position.sourceCountry,
+      ...(dispositionFxEvidence === undefined ? {} : { dispositionFxEvidence }),
+      acquisitionFxEvidence: position.acquisitionFxBindings,
+    });
+    if (result.status !== "READY") {
+      throw new Error(`S1 settlement unresolved: ${result.unresolved.reason}`);
+    }
+    applySettlement(account, position, result.intent);
+    position.acquisitionFxBindings = remainingAcquisitionBindings(
+      position.acquisitionFxBindings,
+      result.intent,
+    );
+    advanceHead(account, result.contentSha256);
+    s1Settlements.push(result);
+    appendedTransactions.push(...result.intent.ledgerTransactions);
+  }
+
+  const s1Marks = markMap(input.instruments, "s1CloseMark");
+  const s1Nav = navFor(
+    input.account.currency,
+    account,
+    positions,
+    s1Marks,
+    input.feeSchedules,
+  );
+  const s2Plan = createS2BuyOrderPlan({
+    decisionId: input.acceptedSubmission.decisionId,
+    s1SessionDate: input.timeline.s1TradeDate,
+    plannedAt: input.timeline.s2PlannedAt,
+    s2TradeDate: input.timeline.s2TradeDate,
+    preOrderTaxReservedNav: s1Nav.taxReservedNav,
+    buyingPowerEvidence: {
+      value: account.buyingPower,
+      snapshotId: `${input.acceptedSubmission.decisionId}:s1-close-ledger`,
+      visibleAt: input.timeline.s1CloseAt,
+    },
+    positions: [...positions.values()].map((position) => ({
+      instrumentId: position.instrumentId,
+      symbol: position.symbol,
+      quantity: position.quantity,
+      mark: requiredMark(s1Marks, position.instrumentId),
+    })),
+    targets: derived.targets,
+    cashWeightBps: input.acceptedSubmission.cashWeightBps,
+    slippageBps: input.slippageBps,
+    ...(input.executionModel === undefined
+      ? {}
+      : { executionModel: input.executionModel }),
+    ...(input.maxParticipationBps === undefined
+      ? {}
+      : { maxParticipationBps: input.maxParticipationBps }),
+    fillPriceScale: input.fillPriceScale,
+    ...(input.feeSchedules === undefined ? {} : { feeSchedules: input.feeSchedules }),
+  });
+  const ledger = replayLedger([
+    ...input.account.priorLedgerTransactions,
+    ...appendedTransactions,
+  ]);
+  assertProjectionMatchesState(ledger, account, positions, input.account.currency);
+  assertTaxAccrualMatchesSettlements(
+    ledger,
+    replayLedger(input.account.priorLedgerTransactions),
+    s1Settlements,
+  );
+  return {
+    ...derived,
+    s1Settlements,
+    appendedTransactions,
+    s1Nav,
+    s2Plan,
+    ledger,
+  };
+}
+
+function validateInput(input: AcceptedTargetCycleS1PlanInput): void {
   for (const [field, value] of [
     ["submissionId", input.acceptedSubmission.submissionId],
     ["decisionId", input.acceptedSubmission.decisionId],
@@ -448,7 +650,7 @@ function validateInput(input: AcceptedTargetCycleInput): void {
 }
 
 function initializePositions(
-  input: readonly AcceptedTargetCycleInstrument[],
+  input: AcceptedTargetCycleS1PlanInput["instruments"],
 ): Map<string, MutablePosition> {
   const positions = new Map<string, MutablePosition>();
   const symbols = new Set<string>();
@@ -484,9 +686,6 @@ function initializePositions(
       grossCost,
       lots: [...instrument.lots],
       acquisitionFxBindings: [...instrument.acquisitionFxBindings],
-      decisionCloseMark: instrument.decisionCloseMark,
-      s1CloseMark: instrument.s1CloseMark,
-      finalMark: instrument.finalMark,
     });
   }
   return positions;
@@ -530,9 +729,34 @@ function navFor(
   currency: string,
   account: MutableAccountState,
   positions: ReadonlyMap<string, MutablePosition>,
-  markField: "decisionCloseMark" | "s1CloseMark" | "finalMark",
-  liquidation: AcceptedTargetCycleInput["liquidation"],
+  marks: ReadonlyMap<string, MarketPriceEvidence>,
+  feeSchedules: readonly FutuFeeSchedule[] | undefined,
 ): NavSnapshot {
+  const valuationDate = [...marks.values()][0]?.sessionDate;
+  if (valuationDate === undefined) {
+    throw new TypeError("NAV requires at least one frozen market mark");
+  }
+  if ([...marks.values()].some((mark) => mark.sessionDate !== valuationDate)) {
+    throw new TypeError("NAV marks must share one valuation date");
+  }
+  const liquidation = calculatePortfolioLiquidation({
+    valuationDate,
+    reportingCurrency: currency,
+    positions: [...positions.values()]
+      .filter((position) => position.quantity !== "0")
+      .map((position) => ({
+        instrumentId: position.instrumentId,
+        symbol: position.symbol,
+        quantity: position.quantity,
+        markPrice: requiredMark(marks, position.instrumentId).value,
+        lots: position.lots.map((lot) => ({
+          lotId: lot.lotId,
+          quantity: lot.quantity,
+          taxBasis: addDecimals(lot.grossPurchasePrice, lot.buyFees),
+        })),
+      })),
+    ...(feeSchedules === undefined ? {} : { feeSchedules }),
+  });
   return calculateNavSnapshot({
     currency,
     settledCash: account.cash,
@@ -540,19 +764,64 @@ function navFor(
     dividendReceivables: decimal("0"),
     otherRecognizedReceivables: decimal("0"),
     positionMarketValues: [...positions.values()].map((position) =>
-      multiplyDecimals(position.quantity, position[markField].value)
+      multiplyDecimals(
+        position.quantity,
+        requiredMark(marks, position.instrumentId).value,
+      )
     ),
     unpaidRealizedCapitalGainsTaxAccrual: account.taxReserve,
     pendingDividendChinaTaxTopUp: decimal("0"),
     estimatedForeignWithholdingPayable: decimal("0"),
     otherUnpaidChinaTaxAccrual: decimal("0"),
-    estimatedCloseFeesForAllPositions: decimal(
+    estimatedCloseFeesForAllPositions:
       liquidation.estimatedCloseFeesForAllPositions,
-    ),
-    estimatedUnrealizedLiquidationTax: decimal(
+    estimatedUnrealizedLiquidationTax:
       liquidation.estimatedUnrealizedLiquidationTax,
-    ),
   });
+}
+
+function markMap<T extends { readonly instrumentId: string }>(
+  instruments: readonly T[],
+  field: keyof T,
+): ReadonlyMap<string, MarketPriceEvidence> {
+  const result = new Map<string, MarketPriceEvidence>();
+  for (const instrument of instruments) {
+    const mark = instrument[field];
+    if (mark === null || typeof mark !== "object") {
+      throw new TypeError(`Instrument ${instrument.instrumentId} has no ${String(field)}`);
+    }
+    result.set(
+      instrument.instrumentId,
+      mark as unknown as MarketPriceEvidence,
+    );
+  }
+  return result;
+}
+
+function requiredMark(
+  marks: ReadonlyMap<string, MarketPriceEvidence>,
+  instrumentId: string,
+): MarketPriceEvidence {
+  const mark = marks.get(instrumentId);
+  if (mark === undefined) throw new TypeError(`Missing mark for ${instrumentId}`);
+  return mark;
+}
+
+function frozenPositions(
+  positions: ReadonlyMap<string, MutablePosition>,
+): readonly AcceptedTargetCyclePosition[] {
+  return Object.freeze(
+    [...positions.values()]
+      .map((position): AcceptedTargetCyclePosition => Object.freeze({
+        instrumentId: position.instrumentId,
+        symbol: position.symbol,
+        quantity: position.quantity,
+        grossCost: position.grossCost,
+        lots: Object.freeze([...position.lots]),
+        acquisitionFxBindings: Object.freeze([...position.acquisitionFxBindings]),
+      }))
+      .sort((left, right) => compareCodePoints(left.symbol, right.symbol)),
+  );
 }
 
 function marketOpen(evidence: CycleOfficialOpenEvidence): MarketPriceEvidence {
@@ -563,6 +832,9 @@ function marketOpen(evidence: CycleOfficialOpenEvidence): MarketPriceEvidence {
     visibleAt: evidence.observedAt,
     snapshotId: evidence.snapshotId,
     factId: evidence.factId,
+    ...(evidence.observedVolume === undefined
+      ? {}
+      : { observedVolume: evidence.observedVolume }),
   });
 }
 
@@ -582,11 +854,10 @@ function requiredOpen(
 
 function fillEvidence(
   open: CycleOfficialOpenEvidence,
-  slippageBps: string,
-  fillPriceScale: string,
-): SimulatedSlippageFillPriceEvidence {
-  return Object.freeze({
-    semantics: "SIMULATED_SLIPPAGE_DERIVED_PRICE",
+  plan: SellOrderPlan | BuyOrderPlan,
+): SimulatedSlippageFillPriceEvidence
+  | SimulatedMinuteParticipationFillPriceEvidence {
+  const common = {
     sourceId: open.sourceId,
     sourceVersionId: open.sourceVersionId,
     factId: open.factId,
@@ -596,18 +867,77 @@ function fillEvidence(
     snapshotId: open.snapshotId,
     officialOpenSessionDate: open.sessionDate,
     officialOpenPrice: open.value,
-    slippageBps,
-    fillPriceScale,
+    slippageBps: plan.slippageBps,
+    fillPriceScale: plan.fillPriceScale,
+  } as const;
+  if (plan.executionModel === "SIMULATED_MINUTE_PARTICIPATION") {
+    if (open.observedVolume === undefined) {
+      throw new TypeError("minute-participation fill requires observedVolume");
+    }
+    return Object.freeze({
+      ...common,
+      semantics: "SIMULATED_MINUTE_PARTICIPATION_DERIVED_PRICE" as const,
+      observedVolume: open.observedVolume,
+      maxParticipationBps: plan.maxParticipationBps!,
+    });
+  }
+  return Object.freeze({
+    ...common,
+    semantics: "SIMULATED_SLIPPAGE_DERIVED_PRICE",
   });
 }
 
-function fullExecution(
+function liquidityEvidence(
+  open: CycleOfficialOpenEvidence,
+  plan: SellOrderPlan | BuyOrderPlan,
+): MinuteParticipationLiquidityEvidence | undefined {
+  if (plan.executionModel !== "SIMULATED_MINUTE_PARTICIPATION") return undefined;
+  if (open.observedVolume === undefined) {
+    throw new TypeError("minute-participation execution requires observedVolume");
+  }
+  return Object.freeze({
+    semantics: "MINUTE_VOLUME_PARTICIPATION_CAP",
+    sourceId: open.sourceId,
+    sourceVersionId: open.sourceVersionId,
+    factId: open.factId,
+    sourceArtifactId: open.sourceArtifactId,
+    sourceContentSha256: open.sourceContentSha256,
+    observedAt: open.observedAt,
+    snapshotId: open.snapshotId,
+    sessionDate: open.sessionDate,
+    observedVolume: open.observedVolume,
+    maxParticipationBps: plan.maxParticipationBps!,
+  });
+}
+
+function executionFromSellOrder(
   order: SellOrderPlan["orders"][number],
   open: CycleOfficialOpenEvidence,
   executedAt: string,
-  priceScale: number,
-  slippageBps: string,
+  plan: SellOrderPlan,
 ): CompletedPaperOrderExecution {
+  if (
+    plan.executionModel === "SIMULATED_MINUTE_PARTICIPATION"
+    && open.observedVolume === undefined
+  ) {
+    throw new TypeError("S1 observedVolume is required");
+  }
+  const liquidity = plan.executionModel === "SIMULATED_MINUTE_PARTICIPATION"
+    ? calculateVolumeParticipationLimit({
+        requestedQuantity: order.quantity,
+        observedVolume: open.observedVolume!,
+        maxParticipationBps: plan.maxParticipationBps!,
+      })
+    : null;
+  const fillQuantity = liquidity?.maximumFillQuantity ?? order.quantity;
+  const canceledQuantity = (
+    BigInt(order.quantity) - BigInt(fillQuantity)
+  ).toString();
+  const terminalStatus = fillQuantity === order.quantity
+    ? "FILLED"
+    : fillQuantity === "0"
+      ? "CANCELED"
+      : "PARTIALLY_FILLED";
   return Object.freeze({
     executionId: `${order.orderId}:execution`,
     orderId: order.orderId,
@@ -617,19 +947,22 @@ function fullExecution(
     instrumentId: order.instrumentId,
     tradeDate: order.plannedTradeDate,
     currency: order.feeCurrency,
-    terminalStatus: "FILLED",
-    canceledQuantity: "0",
-    fills: [Object.freeze({
+    terminalStatus,
+    canceledQuantity,
+    ...(liquidity === null
+      ? {}
+      : { liquidityEvidence: liquidityEvidence(open, plan)! }),
+    fills: fillQuantity === "0" ? [] : [Object.freeze({
       fillId: `${order.orderId}:fill:1`,
-      quantity: order.quantity,
+      quantity: fillQuantity,
       price: applySimulatedSlippage({
         side: "SELL",
         officialOpenPrice: open.value,
-        slippageBps,
-        priceScale,
+        slippageBps: plan.slippageBps,
+        priceScale: Number(plan.fillPriceScale),
       }),
       executedAt,
-      priceEvidence: fillEvidence(open, slippageBps, priceScale.toString()),
+      priceEvidence: fillEvidence(open, plan),
     })],
   });
 }
@@ -639,12 +972,12 @@ function executionFromBuyFill(
   fill: ReturnType<typeof executeS2BuyOrders>["fills"][number],
   open: CycleOfficialOpenEvidence,
   executedAt: string,
-  slippageBps: string,
-  fillPriceScale: string,
+  plan: BuyOrderPlan,
 ): CompletedPaperOrderExecution {
   const terminalStatus = fill.status === "FILLED"
     ? "FILLED"
     : fill.status === "CANCELED_CASH_LIMIT"
+        || fill.status === "CANCELED_LIQUIDITY_LIMIT"
       ? "CANCELED"
       : "PARTIALLY_FILLED";
   return Object.freeze({
@@ -658,32 +991,38 @@ function executionFromBuyFill(
     currency: order.feeCurrency,
     terminalStatus,
     canceledQuantity: fill.canceledQuantity,
+    ...(fill.liquidity === null
+      ? {}
+      : { liquidityEvidence: liquidityEvidence(open, plan)! }),
     fills: fill.fillQuantity === "0" ? [] : [Object.freeze({
       fillId: `${order.orderId}:fill:1`,
       quantity: fill.fillQuantity,
       price: fill.fillPrice,
       executedAt,
-      priceEvidence: fillEvidence(open, slippageBps, fillPriceScale),
+      priceEvidence: fillEvidence(open, plan),
     })],
   });
 }
 
 function ledgerHead(
-  input: AcceptedTargetCycleInput,
+  input: {
+    readonly strategyAccountId: string;
+    readonly runId: string;
+    readonly decisionId: string;
+    readonly currency: string;
+    readonly capturedAt: string;
+  },
   account: MutableAccountState,
   position: MutablePosition,
-  stage: "S1" | "S2",
 ) {
   return Object.freeze({
-    strategyAccountId: input.account.strategyAccountId,
-    runId: input.account.runId,
-    headEventId: `${input.acceptedSubmission.decisionId}:head:${account.headSequence}`,
+    strategyAccountId: input.strategyAccountId,
+    runId: input.runId,
+    headEventId: `${input.decisionId}:head:${account.headSequence}`,
     headSequence: account.headSequence.toString(),
     headHash: account.headHash,
-    capturedAt: stage === "S1"
-      ? input.timeline.s1ExecutedAt
-      : input.timeline.s2ExecutedAt,
-    currency: input.account.currency,
+    capturedAt: input.capturedAt,
+    currency: input.currency,
     instrumentId: position.instrumentId,
     cashAssetBalance: account.cash,
     currentBuyingPower: account.buyingPower,

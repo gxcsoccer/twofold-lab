@@ -7,6 +7,7 @@ const config: WorkerConfig = {
   workerId: "test-worker",
   pollIntervalMs: 10,
   leaseSeconds: 60,
+  agentLeaseSeconds: 1800,
 };
 
 afterEach(() => {

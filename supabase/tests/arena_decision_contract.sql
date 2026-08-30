@@ -180,7 +180,124 @@ as $$
   )
 $$;
 
-select plan(46);
+create or replace function pg_temp.accept_arena_contract_targets_evidenced(
+  p_idempotency_key text,
+  p_submission_id uuid,
+  p_root_session_id text,
+  p_targets jsonb,
+  p_cash_weight_bps text,
+  p_packet_sha256 text,
+  p_expected_stream_seq bigint
+)
+returns public.accepted_target_submission
+language plpgsql
+volatile
+set search_path = public, extensions, pg_temp
+as $$
+declare
+  v_invocation public.decision_invocation%rowtype;
+  v_snapshot public.market_snapshot%rowtype;
+  v_accepted_at timestamptz := (
+    select opened_at + interval '2 minutes' from arena_contract_context
+  );
+  v_targets jsonb;
+  v_decision jsonb;
+  v_decision_sha text;
+  v_input_age text;
+  v_stable_window text;
+  v_evidence_payload jsonb;
+  v_evidence jsonb;
+  v_evidence_sha text;
+  v_canonical text;
+  v_artifact_sha text;
+begin
+  select * into strict v_invocation from public.decision_invocation
+   where root_harness_session_id = p_root_session_id;
+  select * into strict v_snapshot from public.market_snapshot
+   where snapshot_id = v_invocation.market_snapshot_id;
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'symbol', item->>'symbol',
+    'targetWeightBps', item->>'target_weight_bps'
+  ) order by (item->>'symbol') collate "C"), '[]'::jsonb)
+    into v_targets
+    from jsonb_array_elements(p_targets) as target(item);
+  v_decision := jsonb_build_object(
+    'schema', 'twofold.portfolio_decision_evidence/v1',
+    'decisionRef', v_invocation.decision_id::text,
+    'policyRef', 'agent-bundle:arena-contract',
+    'evidenceSnapshotId', v_invocation.market_snapshot_id::text,
+    'targets', v_targets,
+    'cashWeightBps', p_cash_weight_bps
+  );
+  v_decision_sha := encode(
+    digest(convert_to(v_decision::text, 'UTF8'), 'sha256'), 'hex'
+  );
+  v_decision := v_decision || jsonb_build_object(
+    'decisionSha256', v_decision_sha
+  );
+  v_input_age := (
+    extract(epoch from (v_accepted_at - v_invocation.data_cutoff_at)) * 1000
+  )::bigint::text;
+  v_stable_window := (
+    extract(epoch from (v_accepted_at - v_snapshot.sealed_at)) * 1000
+  )::bigint::text;
+  v_evidence_payload := jsonb_build_object(
+    'schema', 'twofold.decision_admission_evidence/v1',
+    'decision', v_decision,
+    'evidenceSnapshotId', v_invocation.market_snapshot_id::text,
+    'observedAt', to_char(v_accepted_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'dataCutoffAt', to_char(v_invocation.data_cutoff_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'evidenceSealedAt', to_char(v_snapshot.sealed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'policy', jsonb_build_object(
+      'policyRef', 'twofold.arena_submission_admission/v1',
+      'maxInputAgeMs', v_input_age,
+      'maxMarketJumpBps', '10000',
+      'minimumStableWindowMs', '0',
+      'maxTargetDeltaBps', '10000',
+      'maxCooldownRemainingMs', '0'
+    ),
+    'metrics', jsonb_build_object(
+      'inputAgeMs', v_input_age,
+      'marketJumpBps', '220',
+      'stableWindowMs', v_stable_window,
+      'maxTargetDeltaBps', '10000',
+      'cooldownRemainingMs', '0'
+    ),
+    'guardAction', 'ALLOW',
+    'reasons', jsonb_build_array('ALL_GUARDS_PASSED')
+  );
+  v_evidence_sha := encode(
+    digest(convert_to(v_evidence_payload::text, 'UTF8'), 'sha256'), 'hex'
+  );
+  v_evidence := v_evidence_payload || jsonb_build_object(
+    'evidenceSha256', v_evidence_sha
+  );
+  v_canonical := v_evidence::text;
+  v_artifact_sha := encode(
+    digest(convert_to(v_canonical, 'UTF8'), 'sha256'), 'hex'
+  );
+  return public.accept_portfolio_targets_with_evidence(
+    p_idempotency_key,
+    p_submission_id,
+    p_root_session_id,
+    (select artifact_id from public.artifact_metadata
+      where idempotency_key = 'arena:packet'),
+    p_packet_sha256,
+    p_targets,
+    p_cash_weight_bps,
+    'Contract target',
+    v_accepted_at,
+    v_evidence,
+    v_canonical,
+    v_evidence_sha,
+    v_artifact_sha,
+    p_expected_stream_seq,
+    'arena-contract'
+  );
+end;
+$$;
+
+select plan(63);
 
 select has_table('public', 'decision_invocation', 'decision_invocation exists');
 select has_table('public', 'agent_session_lineage', 'agent_session_lineage exists');
@@ -188,6 +305,16 @@ select has_table(
   'public',
   'accepted_target_submission',
   'accepted_target_submission exists'
+);
+select has_table(
+  'public',
+  'decision_admission_evidence',
+  'decision admission evidence exists'
+);
+select has_table(
+  'public',
+  'decision_comparison_artifact',
+  'same-snapshot decision comparison artifacts exist'
 );
 select ok(
   to_regclass('public.model_usage_root_attribution') is not null,
@@ -588,7 +715,7 @@ select throws_ok(
 
 select is(
   (
-    pg_temp.accept_arena_contract_targets(
+    pg_temp.accept_arena_contract_targets_evidenced(
       'arena:submission:accepted',
       '50000000-0000-4000-8000-000000000004',
       'arena-root-1',
@@ -615,6 +742,404 @@ select ok(
   'the accepted submission returns its authoritative event ID'
 );
 
+select ok(
+  exists (
+    select 1
+      from public.decision_admission_evidence
+     where submission_id = '50000000-0000-4000-8000-000000000004'
+       and guard_action = 'ALLOW'
+       and evidence->'metrics' ?& array[
+         'inputAgeMs',
+         'marketJumpBps',
+         'stableWindowMs',
+         'maxTargetDeltaBps',
+         'cooldownRemainingMs'
+       ]
+  ),
+  'accepted targets carry every immutable admission observation'
+);
+
+select is(
+  (
+    with identity as (
+      select snapshot_id::text as snapshot_id
+        from public.market_snapshot
+       where idempotency_key = 'arena:snapshot'
+    ), document as (
+      select jsonb_build_object(
+        'schema', 'twofold.portfolio_decision_comparison/v1',
+        'evidenceSnapshotId', snapshot_id,
+        'official', jsonb_build_object(
+          'schema', 'twofold.portfolio_decision_evidence/v1',
+          'decisionRef', 'official:contract',
+          'policyRef', 'official-v1',
+          'evidenceSnapshotId', snapshot_id,
+          'targets', jsonb_build_array(),
+          'cashWeightBps', '10000',
+          'decisionSha256', repeat('e', 64)
+        ),
+        'candidate', jsonb_build_object(
+          'schema', 'twofold.portfolio_decision_evidence/v1',
+          'decisionRef', 'candidate:contract',
+          'policyRef', 'candidate-v1',
+          'evidenceSnapshotId', snapshot_id,
+          'targets', jsonb_build_array(),
+          'cashWeightBps', '10000',
+          'decisionSha256', repeat('f', 64)
+        ),
+        'deltas', jsonb_build_array(),
+        'cashDeltaBps', '0',
+        'maxAbsoluteDeltaBps', '0',
+        'turnoverBps', '0',
+        'identical', true,
+        'comparisonSha256', repeat('d', 64)
+      ) as value
+      from identity
+    ), material as (
+      select value, value::text as canonical_json,
+             encode(digest(convert_to(value::text, 'UTF8'), 'sha256'), 'hex')
+               as artifact_sha256
+        from document
+    )
+    select public.register_decision_comparison_artifact(
+      repeat('d', 64),
+      material.artifact_sha256,
+      (material.value->>'evidenceSnapshotId')::uuid,
+      repeat('e', 64),
+      repeat('f', 64),
+      null,
+      null,
+      material.value,
+      material.canonical_json,
+      'arena-contract'
+    )->>'comparisonSha256'
+    from material
+  ),
+  repeat('d', 64),
+  'same-snapshot decision diff is stored under its content identity'
+);
+
+select is(
+  (
+    select count(*)::integer
+      from public.decision_comparison_artifact
+     where comparison_sha256 = repeat('d', 64)
+       and comparison->'official'->>'evidenceSnapshotId'
+         = comparison->'candidate'->>'evidenceSnapshotId'
+  ),
+  1,
+  'decision comparison persistence keeps exactly one same-snapshot artifact'
+);
+
+select throws_ok(
+  $$
+    with identity as (
+      select snapshot_id::text as snapshot_id
+        from public.market_snapshot
+       where idempotency_key = 'arena:snapshot'
+    ), document as (
+      select jsonb_build_object(
+        'schema', 'twofold.portfolio_decision_comparison/v1',
+        'evidenceSnapshotId', snapshot_id,
+        'official', jsonb_build_object(
+          'evidenceSnapshotId', snapshot_id,
+          'decisionSha256', repeat('a', 64)
+        ),
+        'candidate', jsonb_build_object(
+          'evidenceSnapshotId', '60000000-0000-4000-8000-000000000099',
+          'decisionSha256', repeat('b', 64)
+        ),
+        'deltas', jsonb_build_array(),
+        'cashDeltaBps', '0',
+        'maxAbsoluteDeltaBps', '0',
+        'turnoverBps', '0',
+        'identical', true,
+        'comparisonSha256', repeat('c', 64)
+      ) as value
+      from identity
+    ), material as (
+      select value, value::text as canonical_json,
+             encode(digest(convert_to(value::text, 'UTF8'), 'sha256'), 'hex')
+               as artifact_sha256
+        from document
+    )
+    select public.register_decision_comparison_artifact(
+      repeat('c', 64),
+      material.artifact_sha256,
+      (material.value->>'evidenceSnapshotId')::uuid,
+      repeat('a', 64),
+      repeat('b', 64),
+      null,
+      null,
+      material.value,
+      material.canonical_json,
+      'arena-contract'
+    )
+    from material
+  $$,
+  '22023',
+  'decision comparison crossed its same-snapshot identity',
+  'Postgres rejects a candidate decision from another snapshot'
+);
+
+select ok(
+  to_regclass('public.decision_evolution_evaluation') is not null,
+  'decision evolution evaluations are durable'
+);
+
+create temporary table p1_evolution_clock as
+select
+  clock_timestamp() as proposed_at,
+  clock_timestamp() + interval '1 second' as scheduled_at,
+  clock_timestamp() + interval '2 seconds' as started_at,
+  clock_timestamp() + interval '1 day' as expires_at;
+
+create temporary table p1_evolution_spec as
+select jsonb_build_object(
+  'schema','twofold.evolution_experiment_spec/v1',
+  'experimentId','93000000-0000-5000-8000-000000000001',
+  'experimentCode','pgtap-portfolio-policy-replay-v1',
+  'mode','LOCAL_REPLAY',
+  'hypothesis','Candidate improves terminal NAV without weakening portfolio constraints.',
+  'sourceFindingSha256s',jsonb_build_array(repeat('a',64)),
+  'changeSurface','PORTFOLIO_POLICY',
+  'baselineRef','policy:official-v1',
+  'treatmentRef','policy:candidate-v2',
+  'primaryMetric',jsonb_build_object(
+    'metricKey','portfolio.terminal_nav','direction','HIGHER_IS_BETTER',
+    'minimumAbsoluteImprovement','10'
+  ),
+  'guardrails',jsonb_build_array(
+    jsonb_build_object('metricKey','portfolio.constraint_violation_count','direction','LOWER_IS_BETTER','maximumRegression','0','candidateMaximum','0'),
+    jsonb_build_object('metricKey','portfolio.turnover_bps','direction','LOWER_IS_BETTER','maximumRegression','100'),
+    jsonb_build_object('metricKey','portfolio.simulated_slippage_nav_cost','direction','LOWER_IS_BETTER','maximumRegression','2'),
+    jsonb_build_object('metricKey','portfolio.simulated_fee_nav_cost','direction','LOWER_IS_BETTER','maximumRegression','2'),
+    jsonb_build_object('metricKey','portfolio.simulated_tax_nav_cost','direction','LOWER_IS_BETTER','maximumRegression','2'),
+    jsonb_build_object('metricKey','portfolio.max_drawdown_bps','direction','LOWER_IS_BETTER','maximumRegression','25'),
+    jsonb_build_object('metricKey','portfolio.terminal_failure_count','direction','LOWER_IS_BETTER','maximumRegression','0','candidateMaximum','0')
+  ),
+  'onlineShadow',null,
+  'expiresAt',to_char(clock.expires_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+) as value
+from p1_evolution_clock clock;
+
+select is(
+  public.propose_evolution_experiment(
+    (select value from p1_evolution_spec), repeat('8',64),
+    'model','pgtap:p1-model',(select proposed_at from p1_evolution_clock),
+    'pgtap:p1:propose'
+  )->>'status',
+  'PROPOSED',
+  'P1 portfolio evaluation is preregistered before replay'
+);
+
+select is(
+  public.transition_evolution_experiment(
+    '93000000-0000-5000-8000-000000000001','SCHEDULE','worker',
+    'pgtap:p1-worker',(select scheduled_at from p1_evolution_clock),
+    'pgtap:p1:schedule',null
+  )->>'status',
+  'SCHEDULED',
+  'P1 local replay can be scheduled without promotion authority'
+);
+
+create temporary table p1_evolution_trial as
+select (
+  public.register_evolution_trial(
+    'pgtap-portfolio-policy-replay-v1:trial-1',
+    '93000000-0000-5000-8000-000000000001',null,null,
+    '{"schema":"twofold.evolution_trial_evidence/v1","design":"SAME_SNAPSHOT_PORTFOLIO_REPLAY"}',
+    (select scheduled_at from p1_evolution_clock),
+    (select expires_at from p1_evolution_clock),
+    'pgtap:p1-worker'
+  )->>'trialId'
+)::uuid as trial_id;
+
+create temporary table p1_decision_comparison as
+with identity as (
+  select snapshot_id::text as snapshot_id
+    from public.market_snapshot where idempotency_key = 'arena:snapshot'
+), document as (
+  select jsonb_build_object(
+    'schema','twofold.portfolio_decision_comparison/v1',
+    'evidenceSnapshotId',snapshot_id,
+    'official',jsonb_build_object(
+      'schema','twofold.portfolio_decision_evidence/v1','decisionRef','official:p1',
+      'policyRef','official-v1','evidenceSnapshotId',snapshot_id,
+      'targets',jsonb_build_array(),'cashWeightBps','10000','decisionSha256',repeat('1',64)
+    ),
+    'candidate',jsonb_build_object(
+      'schema','twofold.portfolio_decision_evidence/v1','decisionRef','candidate:p1',
+      'policyRef','candidate-v2','evidenceSnapshotId',snapshot_id,
+      'targets',jsonb_build_array(),'cashWeightBps','10000','decisionSha256',repeat('2',64)
+    ),
+    'deltas',jsonb_build_array(),'cashDeltaBps','0','maxAbsoluteDeltaBps','0',
+    'turnoverBps','500','identical',false,'comparisonSha256',repeat('3',64)
+  ) as value from identity
+)
+select value, value::text as canonical_json,
+       encode(digest(convert_to(value::text,'UTF8'),'sha256'),'hex') as artifact_sha256
+from document;
+
+select is(
+  public.register_decision_comparison_artifact(
+    repeat('3',64),(select artifact_sha256 from p1_decision_comparison),
+    ((select value from p1_decision_comparison)->>'evidenceSnapshotId')::uuid,
+    repeat('1',64),repeat('2',64),'93000000-0000-5000-8000-000000000001',
+    (select trial_id from p1_evolution_trial),(select value from p1_decision_comparison),
+    (select canonical_json from p1_decision_comparison),'pgtap:p1-worker'
+  )->>'comparisonSha256',
+  repeat('3',64),
+  'same-snapshot decision diff is attached to the preregistered trial'
+);
+
+select is(
+  public.transition_evolution_experiment(
+    '93000000-0000-5000-8000-000000000001','START','worker',
+    'pgtap:p1-worker',(select started_at from p1_evolution_clock),
+    'pgtap:p1:start',null
+  )->>'status',
+  'RUNNING',
+  'P1 evaluation starts only after its comparison is durable'
+);
+
+create temporary table p1_decision_evaluation as
+with identity as (
+  select (value->>'evidenceSnapshotId') as snapshot_id
+    from p1_decision_comparison
+), outcomes as (
+  select
+    jsonb_build_object(
+      'schema','twofold.portfolio_replay_outcome/v1','evidenceSnapshotId',snapshot_id,
+      'decisionSha256',repeat('1',64),'replayPolicyRef','arena-replay/v1',
+      'replayInputSha256',repeat('b',64),
+      'navCurrency','USD','metrics',jsonb_build_object(
+        'constraintViolationCount','0','turnoverBps','600',
+        'simulatedSlippageNavCost','5','simulatedFeeNavCost','3',
+        'simulatedTaxNavCost','2','terminalNav','1000','maxDrawdownBps','200',
+        'terminalFailureCount','0'
+      ),'outcomeSha256',repeat('4',64)
+    ) as official,
+    jsonb_build_object(
+      'schema','twofold.portfolio_replay_outcome/v1','evidenceSnapshotId',snapshot_id,
+      'decisionSha256',repeat('2',64),'replayPolicyRef','arena-replay/v1',
+      'replayInputSha256',repeat('b',64),
+      'navCurrency','USD','metrics',jsonb_build_object(
+        'constraintViolationCount','0','turnoverBps','650',
+        'simulatedSlippageNavCost','5.5','simulatedFeeNavCost','3.5',
+        'simulatedTaxNavCost','2.5','terminalNav','1020','maxDrawdownBps','210',
+        'terminalFailureCount','0'
+      ),'outcomeSha256',repeat('5',64)
+    ) as candidate
+  from identity
+), result as (
+  select jsonb_build_object(
+    'schema','twofold.evolution_experiment_result/v1','recommendation','PROMOTE_CANDIDATE',
+    'baselineValue','1000','treatmentValue','1020','primaryImprovement','20',
+    'minimumAbsoluteImprovement','10','guardrails',jsonb_build_array(
+      jsonb_build_object('metricKey','portfolio.constraint_violation_count','baselineValue','0','treatmentValue','0','regression','0','maximumRegression','0','candidateMaximum','0','candidateMaximumPassed',true,'passed',true),
+      jsonb_build_object('metricKey','portfolio.turnover_bps','baselineValue','600','treatmentValue','650','regression','50','maximumRegression','100','passed',true),
+      jsonb_build_object('metricKey','portfolio.simulated_slippage_nav_cost','baselineValue','5','treatmentValue','5.5','regression','0.5','maximumRegression','2','passed',true),
+      jsonb_build_object('metricKey','portfolio.simulated_fee_nav_cost','baselineValue','3','treatmentValue','3.5','regression','0.5','maximumRegression','2','passed',true),
+      jsonb_build_object('metricKey','portfolio.simulated_tax_nav_cost','baselineValue','2','treatmentValue','2.5','regression','0.5','maximumRegression','2','passed',true),
+      jsonb_build_object('metricKey','portfolio.max_drawdown_bps','baselineValue','200','treatmentValue','210','regression','10','maximumRegression','25','passed',true),
+      jsonb_build_object('metricKey','portfolio.terminal_failure_count','baselineValue','0','treatmentValue','0','regression','0','maximumRegression','0','candidateMaximum','0','candidateMaximumPassed',true,'passed',true)
+    ),'resultSha256',repeat('7',64)
+  ) as value
+), document as (
+  select jsonb_build_object(
+    'schema','twofold.portfolio_decision_evolution_evaluation/v1',
+    'experimentId','93000000-0000-5000-8000-000000000001',
+    'evidenceSnapshotId',official->>'evidenceSnapshotId',
+    'comparisonSha256',repeat('3',64),'decisionDeltaTurnoverBps','500',
+    'officialOutcome',official,'candidateOutcome',candidate,
+    'result',(select value from result),'evaluationSha256',repeat('6',64)
+  ) as value from outcomes
+)
+select value, value::text as canonical_json,
+       encode(digest(convert_to(value::text,'UTF8'),'sha256'),'hex') as artifact_sha256
+from document;
+
+select is(
+  public.register_decision_evolution_evaluation(
+    repeat('6',64),(select artifact_sha256 from p1_decision_evaluation),repeat('3',64),
+    '93000000-0000-5000-8000-000000000001',(select trial_id from p1_evolution_trial),
+    ((select value from p1_decision_evaluation)->>'evidenceSnapshotId')::uuid,
+    repeat('4',64),repeat('5',64),repeat('7',64),
+    (select value from p1_decision_evaluation),(select canonical_json from p1_decision_evaluation),
+    'pgtap:p1-worker'
+  )->>'evaluationSha256',
+  repeat('6',64),
+  'P1 evaluation persists every replay metric under one content identity'
+);
+
+select ok(
+  exists (
+    select 1 from public.decision_evolution_evaluation
+     where evaluation_sha256 = repeat('6',64)
+       and evaluation->'officialOutcome'->'metrics' ?& array[
+         'constraintViolationCount','turnoverBps','simulatedSlippageNavCost',
+         'simulatedFeeNavCost','simulatedTaxNavCost','terminalNav',
+         'maxDrawdownBps','terminalFailureCount'
+       ]
+  ),
+  'P1 evidence covers constraints, turnover, costs, tax, NAV, drawdown, and failure'
+);
+
+select is(
+  (select status from public.evolution_experiment
+    where experiment_id = '93000000-0000-5000-8000-000000000001'),
+  'RUNNING',
+  'PROMOTE_CANDIDATE evidence does not auto-promote or complete an experiment'
+);
+
+select throws_ok(
+  $$
+    with tampered as (
+      select jsonb_set(
+        jsonb_set(
+          value,
+          '{candidateOutcome,metrics,constraintViolationCount}',
+          '"1"'::jsonb
+        ),
+        '{evaluationSha256}',
+        to_jsonb(repeat('9',64))
+      ) as value
+      from p1_decision_evaluation
+    ), material as (
+      select value, value::text as canonical_json,
+             encode(digest(convert_to(value::text,'UTF8'),'sha256'),'hex')
+               as artifact_sha256
+      from tampered
+    )
+    select public.register_decision_evolution_evaluation(
+      repeat('9',64),material.artifact_sha256,repeat('3',64),
+      '93000000-0000-5000-8000-000000000001',
+      (select trial_id from p1_evolution_trial),
+      (material.value->>'evidenceSnapshotId')::uuid,
+      repeat('4',64),repeat('5',64),repeat('7',64),
+      material.value,material.canonical_json,'pgtap:p1-worker'
+    )
+    from material
+  $$,
+  '22023',
+  'decision evolution guardrails are not bound to replay metrics',
+  'Postgres rejects a fabricated promotion recommendation after a hard violation'
+);
+
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.register_decision_evolution_evaluation(text,text,text,uuid,uuid,uuid,text,text,text,jsonb,text,text)',
+    'EXECUTE'
+  ) and not has_function_privilege(
+    'authenticated',
+    'public.register_decision_evolution_evaluation(text,text,text,uuid,uuid,uuid,text,text,text,jsonb,text,text)',
+    'EXECUTE'
+  ),
+  'only the private worker can register P1 evaluation evidence'
+);
+
 select is(
   (
     select targets->0->>'symbol'
@@ -627,7 +1152,7 @@ select is(
 
 select is(
   (
-    pg_temp.accept_arena_contract_targets(
+    pg_temp.accept_arena_contract_targets_evidenced(
       'arena:submission:accepted',
       '50000000-0000-4000-8000-000000000004',
       'arena-root-1',
@@ -856,12 +1381,21 @@ select ok(
 );
 
 select ok(
-  has_function_privilege(
+  not has_function_privilege(
     'service_role',
     'public.accept_portfolio_targets(text,uuid,text,uuid,text,jsonb,text,text,timestamp with time zone,bigint,text)',
     'EXECUTE'
   ),
-  'service_role can accept the single root submission'
+  'service_role cannot bypass decision admission evidence'
+);
+
+select ok(
+  has_function_privilege(
+    'service_role',
+    'public.accept_portfolio_targets_with_evidence(text,uuid,text,uuid,text,jsonb,text,text,timestamp with time zone,jsonb,text,text,text,bigint,text)',
+    'EXECUTE'
+  ),
+  'service_role can accept targets only with evidence'
 );
 
 select ok(

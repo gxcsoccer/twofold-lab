@@ -35,7 +35,9 @@ MVP 私有 dogfood 推荐：
 - Snapshot 显式锁定同一个 `target_session_date`；默认选择所有标的最新共同日期，同日 16:20 America/New_York 前拒绝封存，避免把盘中聚合日线冒充收盘数据。
 - `/data` 只读取真实 Supabase 证据链；从 sealed snapshot member 逐项反查 fact、cutoff 前的 delivery/fact 关联、delivery observation 与 raw artifact，不把无关的最新 delivery 拼成快照来源。缺 Provider key、完整标的或 snapshot 时显示不可用，不存在 runtime fixture fallback。
 - 已在独立 Supabase 项目完成迁移与真实凭证注入，并封存 2026-08-21 的 LULU/QQQ/SPY Alpaca SIP 快照；Raw 对象、三名成员和 cutoff provenance 已远端核验。
-- 尚未完成：定时 work queue、交易日历、公司行动、FX 与初始 Futu tax lots。
+- 已完成 Arena durable work queue、Alpaca 交易日历、共享开盘/收盘证据与 ECB
+  reference-cross FX；尚未完成公司行动自动处理与通用 Futu statement/tax-lot
+  导入。当前私有赛季的 150 股 LULU 起始状态来自用户明确冻结的 opening state。
 - 初始组合的纯函数契约和只读校验 CLI 已完成：规范化 JSON 必须使用整数股与
   decimal string，并通过原始 Futu 文件字节的 SHA-256 绑定；当前仍缺用户真实
   结单/tax-lot 文件，因此没有导入任何持仓，也不会生成替代数据。
@@ -44,10 +46,10 @@ MVP 私有 dogfood 推荐：
   的 exact terms 恢复，不依赖后来变化的内存 registry。
 - Worker 已能把 Core order plan 转成数据库契约要求的 canonical envelope，绑定
   run/decision/accepted submission、执行规则、费用条款 SHA 和 engine plan 指纹。
-- 数据库已部署 ledger-head-backed 原子 S2 BUY 结算：由数据库重算可用现金、冻结
-  上限、成交量、费用、journal、lot、acquisition FX 与新 head；Worker 具备严格
-  exact RPC 客户端。该能力尚未接入 durable scheduler，且远端没有官方开盘/FX
-  evidence、ledger head 或 settlement 行，因此当前不会产生真实 paper fill。
+- 数据库已部署 ledger-head-backed 原子 S1/S2 周期结算：由 Core 与数据库边界重算
+  可用现金、冻结上限、成交量、费用、journal、lot、acquisition FX、新 head 与
+  Liquidation NAV。该能力已接入 durable scheduler；Round 1 尚未到市场边界，因此
+  远端当前没有 fill 或 settlement 行是预期状态，不是 fallback。
 
 ## 不能模糊的价格语义
 
@@ -255,7 +257,7 @@ Provider、Supabase 或宿主文件系统密钥。当前仓库尚无该隔离运
 
 ## 分阶段落地
 
-1. **M1 real evidence chain**：Alpaca raw/fact/snapshot、独立 Supabase 与真实 key 已接通；下一步补交易日历、FX 与 durable work queue，并继续验证相同 delivery/cutoff 得到相同 hash。
+1. **M1 real evidence chain**：Alpaca raw/fact/snapshot、交易日历、共享 open/close、ECB reference-cross FX、durable work queue 与独立 Supabase 已接通；下一步补公司行动并继续验证相同 delivery/cutoff 得到相同 hash。
 2. **M2 Arena decision thin slice**：trusted-host packet builder、完整 Bundle manifest、root/descendant Session binding、Arena data/budget/submission gateway、Session lineage、descendant usage aggregate 与实时 Agent tree/预算投影已接通并完成真实 DeepSeek dogfood。下一步是独立的 Controlled Lab instruction-only 消融轨道。
 3. **M3 forward provider**：Alpaca + Massive/CFETS/Futu 文件导入、公司行动修订、租约续期、告警、restatement、月度账单对账。
 4. **M4 untrusted entrants**：外部 Bundle 验证、进程/容器隔离、网络与文件系统 policy、resource limit、超时终止和隔离逃逸测试。

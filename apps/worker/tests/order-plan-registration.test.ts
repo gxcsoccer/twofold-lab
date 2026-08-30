@@ -142,6 +142,57 @@ describe("frozen order plan registration adapter", () => {
     );
   });
 
+  it("binds the minute participation limit into engine, wrapper, and orders", () => {
+    const plan = createS2BuyOrderPlan({
+      decisionId: DECISION_ID,
+      s1SessionDate: S1,
+      plannedAt: S1_CLOSE,
+      s2TradeDate: S2,
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+      slippageBps: "5",
+      fillPriceScale: 8,
+      preOrderTaxReservedNav: "100",
+      buyingPowerEvidence: {
+        value: "100",
+        snapshotId: "ledger-snapshot-s1-close",
+        visibleAt: S1_CLOSE,
+      },
+      positions: [{
+        instrumentId: INSTRUMENT_ID,
+        symbol: "LULU",
+        quantity: "0",
+        mark: closeEvidence("10", S1, S1_CLOSE),
+      }],
+      targets: [{ instrumentId: INSTRUMENT_ID, symbol: "LULU", weightBps: "10000" }],
+      cashWeightBps: "0",
+    });
+
+    const manifest = JSON.parse(registration(plan).planCanonicalJson) as
+      Record<string, any>;
+    expect(manifest).toMatchObject({
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+    });
+    expect(manifest.orders[0]).toMatchObject({
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+    });
+    expect(JSON.parse(manifest.enginePlanFingerprint)).toMatchObject({
+      maxParticipationBps: "100",
+    });
+  });
+
+  it("fails before DB admission when participation is zero", () => {
+    const plan = {
+      ...s2Plan(),
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION" as const,
+      maxParticipationBps: "0",
+    };
+
+    expect(() => registration(plan)).toThrow("maxParticipationBps must be positive");
+  });
+
   it("rejects non-canonical uppercase UUIDs before DB admission", () => {
     const plan = s2Plan();
     expect(() => buildFrozenOrderPlanRegistration({

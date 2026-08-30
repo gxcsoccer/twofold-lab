@@ -42,6 +42,7 @@ import {
   type OrderExecutionModel,
   type SellOrderPlan,
 } from "./rebalance.js";
+import { calculateVolumeParticipationLimit } from "./execution-liquidity.js";
 import {
   calculateFifoDisposition,
   type FifoLotAllocation,
@@ -87,9 +88,31 @@ export interface SimulatedSlippageFillPriceEvidence extends PaperFillEvidenceIde
   readonly fillPriceScale: string;
 }
 
+export interface SimulatedMinuteParticipationFillPriceEvidence
+  extends PaperFillEvidenceIdentity {
+  readonly semantics: "SIMULATED_MINUTE_PARTICIPATION_DERIVED_PRICE";
+  readonly snapshotId: string;
+  readonly officialOpenSessionDate: string;
+  readonly officialOpenPrice: DecimalInput;
+  readonly observedVolume: string;
+  readonly maxParticipationBps: string;
+  readonly slippageBps: string;
+  readonly fillPriceScale: string;
+}
+
 export type PaperFillPriceEvidence =
   | BrokerActualFillPriceEvidence
-  | SimulatedSlippageFillPriceEvidence;
+  | SimulatedSlippageFillPriceEvidence
+  | SimulatedMinuteParticipationFillPriceEvidence;
+
+export interface MinuteParticipationLiquidityEvidence
+  extends PaperFillEvidenceIdentity {
+  readonly semantics: "MINUTE_VOLUME_PARTICIPATION_CAP";
+  readonly snapshotId: string;
+  readonly sessionDate: string;
+  readonly observedVolume: string;
+  readonly maxParticipationBps: string;
+}
 
 export interface PaperOrderFill {
   readonly fillId: string;
@@ -110,6 +133,7 @@ export interface CompletedPaperOrderExecution {
   readonly currency: string;
   readonly terminalStatus: "FILLED" | "PARTIALLY_FILLED" | "CANCELED";
   readonly canceledQuantity: string;
+  readonly liquidityEvidence?: MinuteParticipationLiquidityEvidence;
   /** All fills for the terminal order outcome; fee minima apply once to this array. */
   readonly fills: readonly PaperOrderFill[];
 }
@@ -219,6 +243,7 @@ export interface NormalizedPaperOrderExecution {
   readonly orderQuantity: string;
   readonly filledQuantity: string;
   readonly canceledQuantity: string;
+  readonly liquidityEvidence?: MinuteParticipationLiquidityEvidence;
   readonly fills: readonly NormalizedPaperFill[];
 }
 
@@ -1019,6 +1044,12 @@ function normalizeExecution(
 
   const seenFillIds = new Set<string>();
   const seenProviderExecutionIds = new Set<string>();
+  const liquidityEvidence = normalizeLiquidityEvidence(
+    execution.liquidityEvidence,
+    plan,
+    execution.tradeDate,
+    settledAt,
+  );
   const fills = execution.fills.map((fill, index): NormalizedPaperFill => {
     requireIdentity(fill.fillId, `execution.fills[${index}].fillId`);
     if (seenFillIds.has(fill.fillId)) throw new TypeError(`Duplicate fillId: ${fill.fillId}`);
@@ -1046,6 +1077,7 @@ function normalizeExecution(
       execution.tradeDate,
       plan.slippageBps,
       plan.fillPriceScale,
+      plan.maxParticipationBps,
       fill.executedAt,
       settledAt,
       seenProviderExecutionIds,
@@ -1062,7 +1094,11 @@ function normalizeExecution(
     compareCodePoints(left.executedAt, right.executedAt)
     || compareCodePoints(left.fillId, right.fillId)
   );
-  if (plan.executionModel === "SIMULATED_SLIPPAGE" && fills.length > 1) {
+  if (
+    (plan.executionModel === "SIMULATED_SLIPPAGE"
+      || plan.executionModel === "SIMULATED_MINUTE_PARTICIPATION")
+    && fills.length > 1
+  ) {
     const oneOfficialOpenFact = canonicalFinancialJson(fills[0]!.priceEvidence);
     if (
       fills.some(
@@ -1082,6 +1118,31 @@ function normalizeExecution(
     execution.canceledQuantity,
     "execution.canceledQuantity",
   );
+  if (liquidityEvidence !== undefined) {
+    const liquidity = calculateVolumeParticipationLimit({
+      requestedQuantity: orderQuantity.toString(),
+      observedVolume: liquidityEvidence.observedVolume,
+      maxParticipationBps: liquidityEvidence.maxParticipationBps,
+    });
+    if (filledQuantity > BigInt(liquidity.maximumFillQuantity)) {
+      throw new RangeError("Paper execution exceeds frozen minute liquidity");
+    }
+    for (const fill of fills) {
+      if (
+        fill.priceEvidence.semantics
+          !== "SIMULATED_MINUTE_PARTICIPATION_DERIVED_PRICE"
+        || fill.priceEvidence.factId !== liquidityEvidence.factId
+        || fill.priceEvidence.snapshotId !== liquidityEvidence.snapshotId
+        || fill.priceEvidence.observedVolume !== liquidityEvidence.observedVolume
+        || fill.priceEvidence.maxParticipationBps
+          !== liquidityEvidence.maxParticipationBps
+      ) {
+        throw new TypeError(
+          "fill price and liquidity evidence must bind one minute fact",
+        );
+      }
+    }
+  }
   if (filledQuantity + canceledQuantity !== orderQuantity) {
     throw new RangeError("Filled plus canceled quantity must equal the frozen order quantity");
   }
@@ -1109,7 +1170,77 @@ function normalizeExecution(
     orderQuantity: orderQuantity.toString(),
     filledQuantity: filledQuantity.toString(),
     canceledQuantity: canceledQuantity.toString(),
+    ...(liquidityEvidence === undefined ? {} : { liquidityEvidence }),
     fills,
+  });
+}
+
+function normalizeLiquidityEvidence(
+  evidence: MinuteParticipationLiquidityEvidence | undefined,
+  plan: BuyOrderPlan | SellOrderPlan,
+  tradeDate: string,
+  settledAt: string,
+): MinuteParticipationLiquidityEvidence | undefined {
+  if (plan.executionModel !== "SIMULATED_MINUTE_PARTICIPATION") {
+    if (evidence !== undefined) {
+      throw new TypeError("liquidity evidence is not allowed by the frozen plan");
+    }
+    return undefined;
+  }
+  if (evidence === undefined) {
+    throw new TypeError("minute-participation execution requires liquidity evidence");
+  }
+  requireExactObjectKeys(evidence, [
+    "semantics", "sourceId", "sourceVersionId", "factId",
+    "sourceArtifactId", "sourceContentSha256", "observedAt", "snapshotId",
+    "sessionDate", "observedVolume", "maxParticipationBps",
+  ], "execution.liquidityEvidence");
+  if (evidence.semantics !== "MINUTE_VOLUME_PARTICIPATION_CAP") {
+    throw new TypeError("unsupported execution liquidity evidence");
+  }
+  for (const [field, value] of [
+    ["sourceId", evidence.sourceId],
+    ["sourceVersionId", evidence.sourceVersionId],
+    ["factId", evidence.factId],
+    ["sourceArtifactId", evidence.sourceArtifactId],
+    ["snapshotId", evidence.snapshotId],
+  ] as const) requireIdentity(value, `execution.liquidityEvidence.${field}`);
+  requireSha256(
+    evidence.sourceContentSha256,
+    "execution.liquidityEvidence.sourceContentSha256",
+  );
+  requireIsoTimestamp(evidence.observedAt, "execution.liquidityEvidence.observedAt");
+  requireCalendarDate(evidence.sessionDate, "execution.liquidityEvidence.sessionDate");
+  if (
+    evidence.sessionDate !== tradeDate
+    || evidence.observedAt.slice(0, 10) !== tradeDate
+    || Date.parse(evidence.observedAt) > Date.parse(settledAt)
+  ) throw new TypeError("execution liquidity evidence is outside the trade fence");
+  const observedVolume = requireInteger(
+    evidence.observedVolume,
+    "execution.liquidityEvidence.observedVolume",
+  ).toString();
+  const maxParticipationBps = requireInteger(
+    evidence.maxParticipationBps,
+    "execution.liquidityEvidence.maxParticipationBps",
+  ).toString();
+  if (
+    maxParticipationBps !== plan.maxParticipationBps
+    || BigInt(maxParticipationBps) === 0n
+    || BigInt(maxParticipationBps) > 10_000n
+  ) throw new TypeError("liquidity evidence differs from the frozen plan");
+  return freezeCanonical({
+    semantics: "MINUTE_VOLUME_PARTICIPATION_CAP" as const,
+    sourceId: evidence.sourceId,
+    sourceVersionId: evidence.sourceVersionId,
+    factId: evidence.factId,
+    sourceArtifactId: evidence.sourceArtifactId,
+    sourceContentSha256: evidence.sourceContentSha256,
+    observedAt: evidence.observedAt,
+    snapshotId: evidence.snapshotId,
+    sessionDate: evidence.sessionDate,
+    observedVolume,
+    maxParticipationBps,
   });
 }
 
@@ -1121,6 +1252,7 @@ function normalizeFillEvidence(
   tradeDate: string,
   planSlippageBps: string,
   planFillPriceScale: string,
+  planMaxParticipationBps: string | undefined,
   executedAt: string,
   settledAt: string,
   seenProviderExecutionIds: Set<string>,
@@ -1145,11 +1277,19 @@ function normalizeFillEvidence(
   if (Date.parse(evidence.observedAt) > Date.parse(settledAt)) {
     throw new RangeError("Paper fill evidence was not visible by settlement time");
   }
-  if (executionModel === "SIMULATED_SLIPPAGE") {
-    if (evidence.semantics !== "SIMULATED_SLIPPAGE_DERIVED_PRICE") {
-      throw new TypeError(
-        "SIMULATED_SLIPPAGE plan requires derived official-open price evidence",
-      );
+  if (
+    executionModel === "SIMULATED_SLIPPAGE"
+    || executionModel === "SIMULATED_MINUTE_PARTICIPATION"
+  ) {
+    const volumeParticipation =
+      executionModel === "SIMULATED_MINUTE_PARTICIPATION";
+    const expectedSemantics = volumeParticipation
+      ? "SIMULATED_MINUTE_PARTICIPATION_DERIVED_PRICE"
+      : "SIMULATED_SLIPPAGE_DERIVED_PRICE";
+    if (evidence.semantics !== expectedSemantics) {
+      throw new TypeError(volumeParticipation
+        ? "SIMULATED_MINUTE_PARTICIPATION plan requires matching derived price evidence"
+        : "SIMULATED_SLIPPAGE plan requires derived official-open price evidence");
     }
     requireExactObjectKeys(evidence, [
       "semantics",
@@ -1162,6 +1302,9 @@ function normalizeFillEvidence(
       "snapshotId",
       "officialOpenSessionDate",
       "officialOpenPrice",
+      ...(volumeParticipation
+        ? ["observedVolume", "maxParticipationBps"]
+        : []),
       "slippageBps",
       "fillPriceScale",
     ], `execution.fills[${index}].priceEvidence`);
@@ -1191,6 +1334,32 @@ function normalizeFillEvidence(
       evidence.fillPriceScale,
       `execution.fills[${index}].priceEvidence.fillPriceScale`,
     ).toString();
+    let observedVolume: string | undefined;
+    let maxParticipationBps: string | undefined;
+    if (volumeParticipation) {
+      const volumeEvidence = evidence as
+        SimulatedMinuteParticipationFillPriceEvidence;
+      observedVolume = requireInteger(
+        volumeEvidence.observedVolume,
+        `execution.fills[${index}].priceEvidence.observedVolume`,
+      ).toString();
+      const participation = requireInteger(
+        volumeEvidence.maxParticipationBps,
+        `execution.fills[${index}].priceEvidence.maxParticipationBps`,
+      );
+      if (participation === 0n) {
+        throw new TypeError("maxParticipationBps must be positive");
+      }
+      maxParticipationBps = participation.toString();
+      if (
+        maxParticipationBps !== planMaxParticipationBps
+        || BigInt(maxParticipationBps) > 10_000n
+      ) {
+        throw new TypeError(
+          "Simulated fill participation differs from its frozen plan",
+        );
+      }
+    }
     if (slippageBps !== planSlippageBps || fillPriceScale !== planFillPriceScale) {
       throw new TypeError("Simulated fill derivation settings differ from its frozen plan");
     }
@@ -1205,7 +1374,10 @@ function normalizeFillEvidence(
         `Simulated fill price ${fillPrice} differs from derived price ${expectedFillPrice}`,
       );
     }
-    return freezeCanonical<SimulatedSlippageFillPriceEvidence>({
+    return freezeCanonical<
+      SimulatedSlippageFillPriceEvidence
+      | SimulatedMinuteParticipationFillPriceEvidence
+    >({
       semantics: evidence.semantics,
       sourceId: evidence.sourceId,
       sourceVersionId: evidence.sourceVersionId,
@@ -1216,6 +1388,9 @@ function normalizeFillEvidence(
       snapshotId: evidence.snapshotId,
       officialOpenSessionDate: evidence.officialOpenSessionDate,
       officialOpenPrice,
+      ...(observedVolume === undefined
+        ? {}
+        : { observedVolume, maxParticipationBps: maxParticipationBps! }),
       slippageBps,
       fillPriceScale,
     });

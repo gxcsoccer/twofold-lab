@@ -3,7 +3,7 @@
 Read-only operational console for real market-data evidence, Season status,
 Strategy Runs, the immutable audit stream, and versioned settings. Runtime
 fixtures and demo fallbacks are intentionally absent: missing credentials,
-deliveries, snapshots, or projections remain visibly unavailable.
+deliveries, snapshots, or authoritative state remain visibly unavailable.
 
 ## Environment
 
@@ -20,10 +20,14 @@ snapshot cutoff. It never attaches an unrelated "latest delivery" to snapshot
 evidence. If any layer is absent or inconsistent, the page fails closed instead
 of synthesizing data.
 
-The worker writes dashboard state into the shared `public.projection` table
-using these projection names:
+The home page calls the service-only `get_private_arena_overview` boundary. One
+database statement derives Season status, the current Round, all entrants, the
+eight-stage work DAG, and the latest Liquidation-NAV leaderboard directly from
+authoritative tables. The response rejects JSON number tokens and does not need
+a second mutable Season projection.
 
-- `dashboard.season_overview` — latest row wins;
+Entity-detail pages still use disposable rows in `public.projection`:
+
 - `dashboard.run_detail` — `entity_id` is the Run UUID;
 - `dashboard.audit` — latest row wins;
 - `dashboard.settings` — latest row wins.

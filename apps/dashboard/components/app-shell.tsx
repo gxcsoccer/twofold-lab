@@ -9,6 +9,7 @@ const navigation = [
   { href: "/", label: "赛季概览", exact: true },
   { href: "/data", label: "真实数据", exact: false },
   { href: "/audit", label: "审计", exact: false },
+  { href: "/evolution", label: "自进化", exact: false },
   { href: "/settings", label: "设置", exact: false },
 ];
 

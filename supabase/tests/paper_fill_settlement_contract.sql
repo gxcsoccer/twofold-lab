@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(105);
+select plan(108);
 
 create or replace function pg_temp.settlement_sha256(p_value text)
 returns text
@@ -987,6 +987,7 @@ select ok(
       on run.run_id = account.run_id
     join public.accounting_transaction as journal
       on journal.strategy_account_id = head.strategy_account_id
+    where account.idempotency_key = 'settlement-contract:account'
   ),
   'genesis manifest and hash use only stable business/source keys, never random row UUIDs'
 );
@@ -1498,13 +1499,21 @@ select is(
   'response binds the acquisition tax FX evidence ID'
 );
 select is(
-  (select count(*) from public.position_lot_acquisition_fx),
+  (select count(*) from public.position_lot_acquisition_fx
+    where strategy_account_id = (
+      select strategy_account_id from public.strategy_account
+       where idempotency_key = 'settlement-contract:account'
+    )),
   1::bigint,
   'the new BUY lot atomically receives one acquisition FX binding'
 );
 select is(
   (select public.accounting_decimal_text(acquisition_tax_basis_cny)
-     from public.position_lot_acquisition_fx),
+     from public.position_lot_acquisition_fx
+    where strategy_account_id = (
+      select strategy_account_id from public.strategy_account
+       where idempotency_key = 'settlement-contract:account'
+    )),
   '7220.088',
   'future FIFO tax basis freezes gross plus fees translated to CNY'
 );
@@ -1769,7 +1778,11 @@ select ok(
           and accounting_transaction_count = 2
           and lot_origin_count = 1
           and acquisition_fx_binding_count = 1
-     from public.strategy_ledger_head),
+     from public.strategy_ledger_head
+    where strategy_account_id = (
+      select strategy_account_id from public.strategy_account
+       where idempotency_key = 'settlement-contract:account'
+    )),
   'head counters fully reconcile journal, lot, FX binding, and outcomes'
 );
 
@@ -1816,7 +1829,12 @@ select throws_ok(
 reset role;
 
 select is(
-  (select count(*) from public.paper_fill_settlement where stage = 'S1'),
+  (select count(*) from public.paper_fill_settlement
+    where stage = 'S1'
+      and strategy_account_id = (
+        select strategy_account_id from public.strategy_account
+         where idempotency_key = 'settlement-contract:account'
+      )),
   0::bigint,
   'fail-closed S1 attempts leave no misleading tax settlement state'
 );
@@ -1869,6 +1887,11 @@ as $$
       'intent', jsonb_build_object(
         'stage', p_stage,
         'side', p_side,
+        'balanceTransition', jsonb_build_object(
+          'cashAssetBalanceAfter', '0',
+          'taxReserveAfter', '0',
+          'buyingPowerAfter', '0'
+        ),
         'ledgerHead', jsonb_build_object(
           'strategyAccountId', p_strategy_account_id::text,
           'runId', p_run_id::text,
@@ -1943,7 +1966,23 @@ with plan_rows as (
         strategy_account_id, '81000000-0000-4000-8000-000000000001'
       )
     ),
-    'positions', '[]'::jsonb,
+    'positions', jsonb_build_array(jsonb_build_object(
+      'instrumentId', '82000000-0000-4000-8000-000000000001',
+      'symbol', 'LULU',
+      'quantity', '100',
+      'grossCost', '1000.5',
+      'lots', jsonb_build_array(jsonb_build_object(
+        'lotId', 'accepted-cycle-contract:lot:1',
+        'instrumentId', '82000000-0000-4000-8000-000000000001',
+        'acquisitionSequence', '1',
+        'quantity', '100',
+        'grossPurchasePrice', '1000.5',
+        'buyFees', '2.29'
+      )),
+      'acquisitionFxBindings', jsonb_build_array(jsonb_build_object(
+        'lotId', 'accepted-cycle-contract:lot:1'
+      ))
+    )),
     'ledger', jsonb_build_object(
       'transactionCount', (
         select count(*)::text from public.accounting_transaction
@@ -1952,8 +1991,17 @@ with plan_rows as (
             where idempotency_key = 'settlement-contract:account'
          )
       ),
-      'balances', '[]'::jsonb,
-      'positions', '[]'::jsonb
+      'balances', jsonb_build_array(jsonb_build_object(
+        'accountId', 'asset.cash',
+        'accountKind', 'ASSET',
+        'currency', 'USD',
+        'amount', '0'
+      )),
+      'positions', jsonb_build_array(jsonb_build_object(
+        'accountId', 'securities.inventory',
+        'instrumentId', '82000000-0000-4000-8000-000000000001',
+        'quantity', '100'
+      ))
     ),
     'nav', jsonb_build_object(
       'currency', 'USD',
@@ -2159,6 +2207,31 @@ select isnt(
   'the consumed opening head is no longer durable, so no second cycle can spend the same balances'
 );
 
+set local role service_role;
+create temporary table aggregate_portfolio_state on commit drop as
+select public.get_strategy_portfolio_state(
+  '81000000-0000-4000-8000-000000000001'
+) as value;
+reset role;
+select is(
+  (select value#>>'{ledgerHead,settlementCount}'
+     from aggregate_portfolio_state),
+  '8',
+  'portfolio state reconciles physical and aggregate cycle settlements'
+);
+select is(
+  (select value#>>'{positions,0,quantity}'
+     from aggregate_portfolio_state),
+  '100',
+  'portfolio state continues from the latest accepted-cycle position'
+);
+select is(
+  (select value#>>'{cash,buyingPower}'
+     from aggregate_portfolio_state),
+  '0',
+  'portfolio state carries the latest aggregate cash and reserve fence'
+);
+
 select is(
   (select result->>'schema' from accepted_cycle_commit),
   'twofold.accepted_target_cycle_commit_result/v1',
@@ -2186,7 +2259,8 @@ select is(
 select ok(
   (select cycle_canonical_json::jsonb = cycle
           and cycle_sha256 = pg_temp.settlement_sha256(cycle_canonical_json)
-     from public.accepted_target_cycle),
+     from public.accepted_target_cycle
+    where decision_id = '86000000-0000-4000-8000-000000000001'),
   'persisted cycle retains the exact bytes, parsed payload, and content hash'
 );
 select is(

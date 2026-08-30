@@ -1,0 +1,979 @@
+{
+  "schema": "twofold.private_controlled_lab_config/v1",
+  "season": {
+    "seasonId": "7a6d3769-b84d-52c6-98f2-5d30056e4a12",
+    "seasonCode": "private-us-liquid-100-s2",
+    "displayName": "Private US Liquid 100 S2",
+    "opensAt": "2026-08-29T20:44:28.236Z",
+    "closesAt": "2026-09-27T00:00:00.000Z",
+    "decisionCadence": "US_EQUITY_DAILY_AFTER_CLOSE",
+    "marketTimezone": "America/New_York",
+    "openingSnapshotId": "e502936c-1c97-49d5-9351-deb16721cb5b",
+    "openingSessionDate": "2026-08-28",
+    "openingInstrumentId": "122dd8f9-709a-5652-a27c-a3b5c32755de",
+    "openingSymbol": "LULU",
+    "openingQuantity": "150",
+    "openingHolding": "150 LULU",
+    "openingCash": "0",
+    "genesisId": "private-us-liquid-100-s2:lulu-150:900de98ab433e769",
+    "fxSourceUrl": "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml"
+  },
+  "executionRulebook": {
+    "schema": "twofold.arena_execution_rulebook/v2",
+    "executionModel": "SIMULATED_MINUTE_PARTICIPATION",
+    "openReferenceMethod": "ALPACA_SIP_FIRST_MINUTE_VWAP_VOLUME_REFERENCE",
+    "maxParticipationBps": "100",
+    "slippageBps": "5",
+    "fillPriceScale": "8",
+    "feeScheduleId": "futu_hk_us_equity_fixed_2026-08-23",
+    "taxRulesetId": "cn_resident_direct_foreign_securities_strict_v1",
+    "taxAllocationScale": "12",
+    "rankingNav": "LIQUIDATION_NAV"
+  },
+  "decisionUniverse": {
+    "schema": "twofold.liquid_universe_reference/v1",
+    "artifactPath": "config/universes/us-liquid-100-2026-08-28.json",
+    "artifactSha256": "900de98ab433e769818c6ef419a0a8594562e09c1a1360aba54d5b395dc73b3c",
+    "memberCount": "100"
+  },
+  "universe": [
+    {
+      "instrumentId": "4ce9353c-66d1-46c2-898f-fce867ab0247",
+      "symbol": "NVDA",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1999-01-01",
+      "issuer": "NVIDIA Corporation Common Stock"
+    },
+    {
+      "instrumentId": "b6d1aa75-5c9c-4353-a305-9e2caa1925ab",
+      "symbol": "MSFT",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1986-01-01",
+      "issuer": "Microsoft Corporation Common Stock"
+    },
+    {
+      "instrumentId": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+      "symbol": "AAPL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1980-01-01",
+      "issuer": "Apple Inc. Common Stock"
+    },
+    {
+      "instrumentId": "8ccae427-5dd0-45b3-b5fe-7ba5e422c766",
+      "symbol": "TSLA",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2010-01-01",
+      "issuer": "Tesla Inc. Common Stock"
+    },
+    {
+      "instrumentId": "f801f835-bfe6-4a9d-a6b1-ccbb84bfd75f",
+      "symbol": "AMZN",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1997-01-01",
+      "issuer": "Amazon.com Inc. Common Stock"
+    },
+    {
+      "instrumentId": "fc6a5dcd-4a70-4b8d-b64f-d83a6dae9ba4",
+      "symbol": "META",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2012-01-01",
+      "issuer": "Meta Platforms Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "69b15845-7c63-4586-b274-1cfdfe9df3d8",
+      "symbol": "GOOGL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2004-01-01",
+      "issuer": "Alphabet Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "7a8b4fcf-0622-47ef-8541-de7f70ffc0c4",
+      "symbol": "AVGO",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2009-01-01",
+      "issuer": "Broadcom Inc. Common Stock"
+    },
+    {
+      "instrumentId": "f30d734c-2806-4d0d-b145-f9fade61432b",
+      "symbol": "GOOG",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2004-01-01",
+      "issuer": "Alphabet Inc. Class C Capital Stock"
+    },
+    {
+      "instrumentId": "723c21be-11af-4450-9b64-20346a6905fc",
+      "symbol": "MRVL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2000-01-01",
+      "issuer": "Marvell Technology Inc. Common Stock"
+    },
+    {
+      "instrumentId": "27982558-2464-4daf-bb2f-b3b728659884",
+      "symbol": "ORCL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1986-01-01",
+      "issuer": "Oracle Corporation Common Stock"
+    },
+    {
+      "instrumentId": "ce4833e1-c561-492a-aace-7eb451d09e02",
+      "symbol": "AMAT",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1972-01-01",
+      "issuer": "Applied Materials Inc. Common Stock"
+    },
+    {
+      "instrumentId": "b46a6a71-7b7b-4cd1-a70a-163125cd2dc7",
+      "symbol": "BE",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2018-01-01",
+      "issuer": "Bloom Energy Corporation Class A Common Stock"
+    },
+    {
+      "instrumentId": "3ae976ac-6d14-4c4f-b02d-e83813f8a829",
+      "symbol": "LRCX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1984-01-01",
+      "issuer": "Lam Research Corporation Common Stock"
+    },
+    {
+      "instrumentId": "cf80d13f-470c-4947-8593-c5e098aeba4e",
+      "symbol": "CRM",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2004-01-01",
+      "issuer": "Salesforce Inc. Common Stock"
+    },
+    {
+      "instrumentId": "91ee1b57-f36c-40cf-a8b7-84583daaafc9",
+      "symbol": "DELL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2018-01-01",
+      "issuer": "Dell Technologies Inc. Class C Common Stock"
+    },
+    {
+      "instrumentId": "bb2a26c0-4c77-4801-8afc-82e8142ac7b8",
+      "symbol": "NFLX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2002-01-01",
+      "issuer": "Netflix Inc. Common Stock"
+    },
+    {
+      "instrumentId": "0ec9e18b-6dc2-43f7-a956-8d07bac7c08b",
+      "symbol": "NOW",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2012-01-01",
+      "issuer": "ServiceNow Inc. Common Stock"
+    },
+    {
+      "instrumentId": "9ec078b1-5167-4d3d-908c-a1e49be367f1",
+      "symbol": "CSCO",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1990-01-01",
+      "issuer": "Cisco Systems Inc. Common Stock (DE)"
+    },
+    {
+      "instrumentId": "a9be5ee1-9ac7-4dbc-a09e-bb4ba98a3a19",
+      "symbol": "MSTR",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1998-01-01",
+      "issuer": "Strategy Inc Common Stock Class A"
+    },
+    {
+      "instrumentId": "14809275-9fc9-4680-9621-9f6803ead799",
+      "symbol": "CRWV",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2025-01-01",
+      "issuer": "CoreWeave Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "8fea5887-a5b5-4c84-87a6-0fad05130e60",
+      "symbol": "APP",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2021-01-01",
+      "issuer": "Applovin Corporation Class A Common Stock"
+    },
+    {
+      "instrumentId": "fe794b59-e78a-4544-b35b-41d3cfb38f12",
+      "symbol": "GEV",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2024-01-01",
+      "issuer": "GE Vernova Inc. Common Stock"
+    },
+    {
+      "instrumentId": "c1fe01e7-c9b1-4b92-8c7a-32153021367e",
+      "symbol": "KLAC",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1980-01-01",
+      "issuer": "KLA Corporation Common Stock"
+    },
+    {
+      "instrumentId": "064dd45f-7a58-452c-93f2-377f9a0cc7f2",
+      "symbol": "GS",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1999-01-01",
+      "issuer": "Goldman Sachs Group Inc. (The) Common Stock"
+    },
+    {
+      "instrumentId": "2140998d-7f62-46f2-a9b2-e44350bd4807",
+      "symbol": "MA",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2006-01-01",
+      "issuer": "Mastercard Incorporated Common Stock"
+    },
+    {
+      "instrumentId": "e4870680-5a31-43e0-a477-c47d158ac43d",
+      "symbol": "SMCI",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2020-01-01",
+      "issuer": "Super Micro Computer Inc. Common Stock"
+    },
+    {
+      "instrumentId": "16a4a26f-e78e-4e9f-8438-b6fe63aa861d",
+      "symbol": "AAOI",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2013-01-01",
+      "issuer": "Applied Optoelectronics Inc. Common Stock"
+    },
+    {
+      "instrumentId": "26226278-b62c-47ec-a1bd-cf0dbd14b420",
+      "symbol": "CRWD",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2019-01-01",
+      "issuer": "CrowdStrike Holdings Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "c6e72c57-a1a9-4e4b-a7d0-029160f8bd64",
+      "symbol": "HOOD",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2021-01-01",
+      "issuer": "Robinhood Markets Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "39be1334-06b6-4df2-a2f1-b21b942628d0",
+      "symbol": "QCOM",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1991-01-01",
+      "issuer": "QUALCOMM Incorporated Common Stock"
+    },
+    {
+      "instrumentId": "99337c8c-71cb-409c-8343-f091b50401a2",
+      "symbol": "SNOW",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2020-01-01",
+      "issuer": "Snowflake Inc. Common Stock"
+    },
+    {
+      "instrumentId": "bea0f181-afd8-4bd2-9486-85d3fc2f10d7",
+      "symbol": "UBER",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2019-01-01",
+      "issuer": "Uber Technologies Inc. Common Stock"
+    },
+    {
+      "instrumentId": "91cee411-1675-48eb-a902-45c8c152f2a1",
+      "symbol": "RKLB",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2020-01-01",
+      "issuer": "Rocket Lab Corporation Common Stock"
+    },
+    {
+      "instrumentId": "cd1347d7-8add-49bd-acd1-4ffde9a4081b",
+      "symbol": "INTU",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1993-01-01",
+      "issuer": "Intuit Inc. Common Stock"
+    },
+    {
+      "instrumentId": "09a51104-980a-47b6-ad4d-e4f04059be4a",
+      "symbol": "ABBV",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2012-01-01",
+      "issuer": "AbbVie Inc. Common Stock"
+    },
+    {
+      "instrumentId": "2ac633b5-b3a7-4ba6-975d-f0f1e12dd1e4",
+      "symbol": "ADBE",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1986-01-01",
+      "issuer": "Adobe Inc. Common Stock"
+    },
+    {
+      "instrumentId": "9c4f8e1f-1d92-4b53-b7c8-b5678f972259",
+      "symbol": "ALAB",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2024-01-01",
+      "issuer": "Astera Labs Inc. Common Stock"
+    },
+    {
+      "instrumentId": "113d6f5b-a48f-4d20-a63f-79ea0bc88ebd",
+      "symbol": "DDOG",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2019-01-01",
+      "issuer": "Datadog Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "a0026393-53a9-454c-89f9-1eb7cb4ae7af",
+      "symbol": "VRT",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2018-01-01",
+      "issuer": "Vertiv Holdings LLC Class A Common Stock"
+    },
+    {
+      "instrumentId": "201b268b-cde8-4010-9fe3-41d2ac7f1e9c",
+      "symbol": "AMGN",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1983-01-01",
+      "issuer": "Amgen Inc. Common Stock"
+    },
+    {
+      "instrumentId": "b839dd23-cd51-4d0f-8352-7a14b517391c",
+      "symbol": "PATH",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2021-01-01",
+      "issuer": "UiPath Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "9af5ec24-875e-4405-992b-b26ef3f0c75c",
+      "symbol": "CRCL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2025-01-01",
+      "issuer": "Circle Internet Group Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "230eb69c-58ed-4fcf-a5e8-540db323d34c",
+      "symbol": "NET",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2019-01-01",
+      "issuer": "Cloudflare Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "e02df0be-fd3a-4762-b4c1-c274784bf756",
+      "symbol": "ISRG",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2000-01-01",
+      "issuer": "Intuitive Surgical Inc. Common Stock"
+    },
+    {
+      "instrumentId": "5aad895b-f615-59cb-8067-158b82b616ba",
+      "symbol": "ABNB",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2020-01-01",
+      "issuer": "Airbnb Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "8945fd10-2f7a-45bd-acae-1618cb7235b1",
+      "symbol": "AXTI",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1998-01-01",
+      "issuer": "AXT Inc Common Stock"
+    },
+    {
+      "instrumentId": "de7edaf4-bc7f-44fc-87d9-27b52406ccc6",
+      "symbol": "MPWR",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2004-01-01",
+      "issuer": "Monolithic Power Systems Inc. Common Stock"
+    },
+    {
+      "instrumentId": "aa222c8c-5f60-4b88-bc73-7aaadf424628",
+      "symbol": "GILD",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1992-01-01",
+      "issuer": "Gilead Sciences Inc. Common Stock"
+    },
+    {
+      "instrumentId": "03a4498a-78b3-4043-8dcb-2c3cf4dc352e",
+      "symbol": "HPE",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2015-01-01",
+      "issuer": "Hewlett Packard Enterprise Company Common Stock"
+    },
+    {
+      "instrumentId": "2e24c584-029a-46b3-9f68-5ccacfc4ed84",
+      "symbol": "IONQ",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2021-01-01",
+      "issuer": "IonQ Inc. Common Stock"
+    },
+    {
+      "instrumentId": "548bb94e-da40-4dba-9b1f-5770d31d66f1",
+      "symbol": "ASTS",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2019-01-01",
+      "issuer": "AST SpaceMobile Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "6f35d70d-d7cb-48ce-8d2e-be0c7775228e",
+      "symbol": "RDDT",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2024-01-01",
+      "issuer": "Reddit Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "2ada15fb-1cf1-4241-a97b-0837322da8d6",
+      "symbol": "CIEN",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1997-01-01",
+      "issuer": "Ciena Corporation Common Stock"
+    },
+    {
+      "instrumentId": "467bc92e-332b-4f62-95c7-3c9288c20018",
+      "symbol": "BLK",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1999-01-01",
+      "issuer": "BlackRock Inc. Common Stock"
+    },
+    {
+      "instrumentId": "edc751a9-e628-40bd-9498-23ad7918269e",
+      "symbol": "MCHP",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1993-01-01",
+      "issuer": "Microchip Technology Incorporated Common Stock"
+    },
+    {
+      "instrumentId": "b56fafb4-300c-4444-a83a-876ca63e1b3c",
+      "symbol": "FIX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1997-01-01",
+      "issuer": "Comfort Systems USA Inc. Common Stock"
+    },
+    {
+      "instrumentId": "2b7d41ee-36a4-4c7e-b783-896568c61ed0",
+      "symbol": "FTNT",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2009-01-01",
+      "issuer": "Fortinet Inc. Common Stock"
+    },
+    {
+      "instrumentId": "036f74ce-5de5-4718-bc41-1f89caba4388",
+      "symbol": "MDB",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2017-01-01",
+      "issuer": "MongoDB Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "0a7deac5-2d75-4e54-9f66-51c1c6fad55b",
+      "symbol": "SBUX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1992-01-01",
+      "issuer": "Starbucks Corporation Common Stock"
+    },
+    {
+      "instrumentId": "072e0811-8f84-4acc-bc3b-95761ea08dd6",
+      "symbol": "HLT",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2016-01-01",
+      "issuer": "Hilton Worldwide Holdings Inc. Common Stock"
+    },
+    {
+      "instrumentId": "723bdaf9-9e77-45d1-b6b5-5a44db902cdd",
+      "symbol": "CIFR",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2020-01-01",
+      "issuer": "Cipher Digital Inc. Common Stock"
+    },
+    {
+      "instrumentId": "5098a4d2-0917-4184-862c-17dbefde2ed4",
+      "symbol": "REGN",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1991-01-01",
+      "issuer": "Regeneron Pharmaceuticals Inc. Common Stock"
+    },
+    {
+      "instrumentId": "58173a3c-c7e1-4150-b48f-1af063a88e26",
+      "symbol": "COF",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1994-01-01",
+      "issuer": "Capital One Financial Corporation Common Stock"
+    },
+    {
+      "instrumentId": "adcce409-1666-4ceb-89fa-ecbb458c18ea",
+      "symbol": "ROST",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1985-01-01",
+      "issuer": "Ross Stores Inc. Common Stock"
+    },
+    {
+      "instrumentId": "8e15f85d-62ba-4836-87d7-594a22267d47",
+      "symbol": "CVNA",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2017-01-01",
+      "issuer": "Carvana Co. Class A Common Stock"
+    },
+    {
+      "instrumentId": "f801bacd-b8a5-4478-8321-699c3c9984cb",
+      "symbol": "EQIX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2000-01-01",
+      "issuer": "Equinix Inc. Common Stock REIT"
+    },
+    {
+      "instrumentId": "a3e21504-59e3-4f4b-8f9c-86a569bdf842",
+      "symbol": "CMG",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2006-01-01",
+      "issuer": "Chipotle Mexican Grill Inc. Common Stock"
+    },
+    {
+      "instrumentId": "fa8500c0-9022-4a74-97f9-93d41ed28dac",
+      "symbol": "SNPS",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1992-01-01",
+      "issuer": "Synopsys Inc. Common Stock"
+    },
+    {
+      "instrumentId": "357a8404-f368-40a1-9356-3eb500f4f08a",
+      "symbol": "VRTX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1991-01-01",
+      "issuer": "Vertex Pharmaceuticals Incorporated Common Stock"
+    },
+    {
+      "instrumentId": "f465153d-9f1b-4d1b-88f5-26f55856911d",
+      "symbol": "BMNR",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2025-01-01",
+      "issuer": "BitMine Immersion Technologies Inc. Common Stock"
+    },
+    {
+      "instrumentId": "dab97681-1775-47b8-922a-d23a4e50744d",
+      "symbol": "ICE",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2005-01-01",
+      "issuer": "Intercontinental Exchange Inc. Common Stock"
+    },
+    {
+      "instrumentId": "2e65dd16-9fd7-42c7-aa0f-bd7950f028be",
+      "symbol": "TDG",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2006-01-01",
+      "issuer": "Transdigm Group Incorporated Common Stock"
+    },
+    {
+      "instrumentId": "c9cc0895-bbca-47fb-be9e-e70e4a7eb94d",
+      "symbol": "BX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2007-01-01",
+      "issuer": "Blackstone Inc. Common Stock"
+    },
+    {
+      "instrumentId": "4831318c-901a-4b29-b508-28ca8ccb2518",
+      "symbol": "TWLO",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2016-01-01",
+      "issuer": "Twilio Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "28d765e8-8085-4716-bde2-de0182b644e5",
+      "symbol": "AXON",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2001-01-01",
+      "issuer": "Axon Enterprise Inc. Common Stock"
+    },
+    {
+      "instrumentId": "46502bdb-1f73-48cd-a9e7-e194d1d6938d",
+      "symbol": "TTWO",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1997-01-01",
+      "issuer": "Take-Two Interactive Software Inc. Common Stock"
+    },
+    {
+      "instrumentId": "914dfaf2-1ddc-4b87-9695-8001a7beed9e",
+      "symbol": "U",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2020-01-01",
+      "issuer": "Unity Software Inc. Common Stock"
+    },
+    {
+      "instrumentId": "bc05b0d9-3b5d-4530-b500-3af2accbd71e",
+      "symbol": "CME",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2002-01-01",
+      "issuer": "CME Group Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "4f34a08c-9bdd-484a-8601-f9c583fee6a0",
+      "symbol": "URI",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1997-01-01",
+      "issuer": "United Rentals Inc. Common Stock"
+    },
+    {
+      "instrumentId": "f99ee8af-9d78-4b46-9f2c-3cf6ce839ccf",
+      "symbol": "HCA",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2011-01-01",
+      "issuer": "HCA Healthcare Inc. Common Stock"
+    },
+    {
+      "instrumentId": "10b35642-7d26-47d1-8987-4f7a7632d273",
+      "symbol": "EBAY",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1998-01-01",
+      "issuer": "eBay Inc. Common Stock"
+    },
+    {
+      "instrumentId": "b14caeab-f212-40ee-975a-38b9317e46b1",
+      "symbol": "UPS",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1999-01-01",
+      "issuer": "United Parcel Service Inc. Common Stock"
+    },
+    {
+      "instrumentId": "f39e42cd-b178-4015-97f9-76d07b0654e6",
+      "symbol": "APLD",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2022-01-01",
+      "issuer": "Applied Digital Corporation Common Stock"
+    },
+    {
+      "instrumentId": "b4ef8484-77d0-42d9-97a5-d67948cbb979",
+      "symbol": "RCL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1993-01-01",
+      "issuer": "Royal Caribbean Cruises Ltd. Common Stock"
+    },
+    {
+      "instrumentId": "550823f6-8d6f-4a45-91e3-d55ea3f98bb7",
+      "symbol": "RBLX",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2021-01-01",
+      "issuer": "Roblox Corporation Class A Common Stock"
+    },
+    {
+      "instrumentId": "1c7f101c-4c08-46e9-9f79-60ca13c07e51",
+      "symbol": "CTSH",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1998-01-01",
+      "issuer": "Cognizant Technology Solutions Corporation Class A Common Stock"
+    },
+    {
+      "instrumentId": "d8917341-9b29-4fe9-a373-c8ddd6d5ae86",
+      "symbol": "CCL",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1987-01-01",
+      "issuer": "Carnival Corporation Ltd. Common Shares"
+    },
+    {
+      "instrumentId": "1d6067de-231e-4f92-a646-34cd7299c8b5",
+      "symbol": "FIG",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2025-01-01",
+      "issuer": "Figma Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "ab42bac7-0551-47fd-8f5b-3313142cb075",
+      "symbol": "DVN",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1985-01-01",
+      "issuer": "Devon Energy Corporation Common Stock"
+    },
+    {
+      "instrumentId": "de5fc535-1cdd-4a57-92ba-ac58a43aed81",
+      "symbol": "GM",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2010-01-01",
+      "issuer": "General Motors Company Common Stock"
+    },
+    {
+      "instrumentId": "d37df28f-5646-48c8-99cc-4d0c9a5ec9ff",
+      "symbol": "NTAP",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "1995-01-01",
+      "issuer": "NetApp Inc. Common Stock"
+    },
+    {
+      "instrumentId": "fa06daac-c3f1-409c-bddb-d44c8293e8b3",
+      "symbol": "FSLR",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2006-01-01",
+      "issuer": "First Solar Inc. Common Stock"
+    },
+    {
+      "instrumentId": "b02df0cc-0a0a-4ecb-8e92-201b1044ea21",
+      "symbol": "MRNA",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2018-01-01",
+      "issuer": "Moderna Inc. Common Stock"
+    },
+    {
+      "instrumentId": "a2d428df-103b-4db0-b0b0-6d2c826b840c",
+      "symbol": "IBKR",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2019-01-01",
+      "issuer": "Interactive Brokers Group Inc. Class A Common Stock"
+    },
+    {
+      "instrumentId": "77832354-b542-4769-b168-1ee930e2d2e9",
+      "symbol": "ILMN",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2000-01-01",
+      "issuer": "Illumina Inc. Common Stock"
+    },
+    {
+      "instrumentId": "acdc828b-f33a-40e9-a5e4-863d813e897c",
+      "symbol": "NTRA",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2015-01-01",
+      "issuer": "Natera Inc. Common Stock"
+    },
+    {
+      "instrumentId": "8dd538ed-bf95-4b22-a6c7-e6f01131d65d",
+      "symbol": "DXCM",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2005-01-01",
+      "issuer": "DexCom Inc. Common Stock"
+    },
+    {
+      "instrumentId": "d9263a3c-194d-48b2-b272-13fc42aa2bdd",
+      "symbol": "LNG",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NYSE",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2001-01-01",
+      "issuer": "Cheniere Energy Inc. Common Stock"
+    },
+    {
+      "instrumentId": "122dd8f9-709a-5652-a27c-a3b5c32755de",
+      "symbol": "LULU",
+      "instrumentType": "common_stock",
+      "primaryExchange": "NASDAQ",
+      "issuerTaxResidency": "US",
+      "effectiveFrom": "2007-07-27",
+      "issuer": "lululemon athletica inc."
+    }
+  ],
+  "rounds": [
+    {
+      "roundId": "d087c15e-43f3-5052-b8f6-a6b44c210691",
+      "roundIndex": "1",
+      "decisionSnapshotId": "e502936c-1c97-49d5-9351-deb16721cb5b",
+      "decisionSessionDate": "2026-08-28",
+      "decisionWindowOpensAt": "2026-08-29T20:44:28.236Z",
+      "decisionWindowClosesAt": "2026-08-31T13:15:00.000Z",
+      "calendarStartDate": "2026-08-28",
+      "calendarEndDate": "2026-09-11"
+    }
+  ],
+  "entrants": [
+    {
+      "entrantId": "3a3a2c9c-c1b5-53a8-a788-47a3abdbe244",
+      "entrantCode": "twofold",
+      "runId": "80000208-140d-5e0d-9347-93bd8b614b4d",
+      "bundleId": "twofold@0.1.0",
+      "bundleSha256": "7a2ecdef10a51c5c9d0d4235ae32625747b0af9d234ff1ef489536cc7ad7c473",
+      "presetId": "twofold",
+      "provider": "deepseek-official",
+      "model": "deepseek-v4-pro",
+      "executionClass": "ROOT_ONLY",
+      "track": "MAIN_ARENA"
+    },
+    {
+      "entrantId": "6907faa4-a48c-5cc5-a87b-c31a32314d0d",
+      "entrantCode": "twofold-orchestrator",
+      "runId": "f34daaa6-8487-50ce-b407-a9c38259c9e8",
+      "bundleId": "twofold-orchestrator@0.1.0",
+      "bundleSha256": "88d063a0be6c50482201da0c706340c8e33ee273e5b422bd3f357bc0729930aa",
+      "presetId": "twofold-orchestrator",
+      "provider": "deepseek-official",
+      "model": "deepseek-v4-pro",
+      "executionClass": "ORCHESTRATED",
+      "track": "MAIN_ARENA"
+    }
+  ]
+}

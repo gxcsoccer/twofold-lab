@@ -76,10 +76,7 @@ export function createSetupSeasonOverview(
     setupRequired: true,
     connection,
     checklist: setupChecklist,
-    season: null,
-    runs: [],
-    modelUsage: null,
-    activity: [],
+    overview: null,
   };
 }
 
@@ -179,6 +176,7 @@ export function createUnavailableArenaDecision(
     status,
     projection: null,
     evidence: null,
+    acceptedSubmission: null,
     executionCycle: null,
     executionReadiness: null,
     issues,

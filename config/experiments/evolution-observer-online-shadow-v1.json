@@ -1,0 +1,36 @@
+{
+  "spec": {
+    "schema": "twofold.evolution_experiment_spec/v1",
+    "experimentId": "d5cf2739-b191-418f-887a-33c19c7e6a7a",
+    "experimentCode": "evolution-observer-online-shadow-v1",
+    "mode": "ONLINE_SHADOW",
+    "hypothesis": "An isolated eighth evolution phase can complete scheduled evidence cycles without regressing the official Arena tick failure rate.",
+    "sourceFindingSha256s": [
+      "4a811cf67c37f2b35b66f0cd213747537550a993b68232c4c240de1081aad60a"
+    ],
+    "changeSurface": "TICK_ORCHESTRATION",
+    "baselineRef": "worker:seven-phase-arena-tick/v1",
+    "treatmentRef": "worker:eight-phase-isolated-evolution/v1",
+    "primaryMetric": {
+      "metricKey": "platform.evolution.cycle_completion_rate",
+      "direction": "HIGHER_IS_BETTER",
+      "minimumAbsoluteImprovement": "0.8"
+    },
+    "guardrails": [
+      {
+        "metricKey": "platform.tick.failure_rate",
+        "direction": "LOWER_IS_BETTER",
+        "maximumRegression": "0.02"
+      }
+    ],
+    "onlineShadow": {
+      "seasonId": "1486ba8e-47ae-5774-ba44-5c26f9359eeb",
+      "startsAtRoundIndex": "2",
+      "maximumRounds": "2",
+      "rankingScope": "SHADOW"
+    },
+    "expiresAt": "2026-09-30T00:00:00.000Z"
+  },
+  "proposedAt": "2026-08-30T05:10:00.000Z",
+  "actorId": "twofold:evolution-analyzer"
+}

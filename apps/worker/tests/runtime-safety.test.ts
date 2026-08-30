@@ -2,7 +2,11 @@ import { EventEmitter } from "node:events";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { hasRegisteredArenaDescendant } from "../src/arena-runtime.js";
+import {
+  arenaBudgetEnforcementStatus,
+  hasRegisteredArenaDescendant,
+  isArenaDescendantRequirementSatisfied,
+} from "../src/arena-runtime.js";
 import type {
   ArenaDecisionStatus,
   ArenaProjectionState,
@@ -109,5 +113,51 @@ describe("orchestrated submission prerequisite", () => {
       origin: "subagent",
     } as ArenaProjectionState["agents"][number]);
     expect(hasRegisteredArenaDescendant(projection)).toBe(true);
+  });
+
+  it("does not impose the orchestrated descendant gate on root-only entrants", () => {
+    const rootOnly = {
+      agents: [{
+        sessionId: "root",
+        parentSessionId: null,
+        origin: "root",
+      }],
+    } as ArenaProjectionState;
+
+    expect(isArenaDescendantRequirementSatisfied("ROOT_ONLY", rootOnly)).toBe(true);
+    expect(isArenaDescendantRequirementSatisfied("ORCHESTRATED", rootOnly)).toBe(false);
+    rootOnly.agents.push({
+      ...rootOnly.agents[0]!,
+      sessionId: "child",
+      parentSessionId: "root",
+      origin: "subagent",
+    });
+    expect(isArenaDescendantRequirementSatisfied("ORCHESTRATED", rootOnly)).toBe(true);
+  });
+
+  it("does not call a zero descendant allowance a spent provider budget", () => {
+    const state = {
+      treeUsage: {
+        providerRequestCount: "0",
+        totalBillableTokens: "0",
+        estimatedCostUsd: null,
+        costStatus: "ESTIMATED",
+      },
+      budget: {
+        maxProviderRequests: "4",
+        maxBillableTokens: "120000",
+        maxEstimatedCostUsd: "1.00",
+        maxDescendants: "0",
+      },
+    } as ArenaProjectionState;
+
+    expect(arenaBudgetEnforcementStatus(state, {
+      providerBudgetDenied: false,
+      descendantBudgetDenied: false,
+    })).toBe("WITHIN_LIMITS");
+    expect(arenaBudgetEnforcementStatus(state, {
+      providerBudgetDenied: false,
+      descendantBudgetDenied: true,
+    })).toBe("EXHAUSTED");
   });
 });

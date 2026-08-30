@@ -72,6 +72,10 @@ function formatOptionalCost(value: string | null): string {
   return value === null ? "未定价" : formatUsdCost(value);
 }
 
+function formatWeightBps(value: string): string {
+  return `${new Decimal(value).dividedBy(100).toFixed(2)}%`;
+}
+
 function ratio(used: string, maximum: string): { width: string; label: string } | null {
   const max = new Decimal(maximum);
   if (!max.isPositive()) return null;
@@ -547,6 +551,43 @@ export function ArenaDecisionView({ initialData }: { initialData: ArenaDecisionP
           <AgentBranch node={root} childrenByParent={childrenByParent} />
         </ol>
       </section>
+
+      {data.acceptedSubmission ? (
+        <section className="panel accepted-target-panel" aria-label="已接受目标组合">
+          <div className="section-heading compact-heading">
+            <div>
+              <p className="eyebrow">Accepted portfolio</p>
+              <h2>已接受目标组合</h2>
+            </div>
+            <div className="accepted-target-summary-metrics">
+              <span>{formatInteger(String(data.acceptedSubmission.targets.length))} 只股票</span>
+              <span>现金 {formatWeightBps(data.acceptedSubmission.cashWeightBps)}</span>
+            </div>
+          </div>
+          <p className="accepted-target-decision-summary">
+            {data.acceptedSubmission.decisionSummary}
+          </p>
+          {data.acceptedSubmission.targets.length === 0 ? (
+            <p className="table-note">本轮未持有股票，目标组合为 100% 现金。</p>
+          ) : (
+            <ol className="accepted-target-list">
+              {data.acceptedSubmission.targets.map((target) => (
+                <li key={target.symbol}>
+                  <div>
+                    <strong className="mono">{target.symbol}</strong>
+                    <span className="tabular">{formatWeightBps(target.targetWeightBps)}</span>
+                  </div>
+                  {target.rationale ? <p>{target.rationale}</p> : null}
+                </li>
+              ))}
+            </ol>
+          )}
+          <dl className="definition-list arena-definition-list accepted-target-evidence">
+            <div><dt>Submission SHA-256</dt><dd className="mono hash-value">{data.acceptedSubmission.submissionSha256}</dd></div>
+            <div><dt>接受时间</dt><dd>{formatDateTime(data.acceptedSubmission.acceptedAt)}</dd></div>
+          </dl>
+        </section>
+      ) : null}
 
       <div className="two-column-grid arena-evidence-grid">
         <section className="panel submission-panel">

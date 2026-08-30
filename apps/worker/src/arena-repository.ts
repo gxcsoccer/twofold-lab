@@ -3,9 +3,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   assertJsonValue,
+  canonicalFinancialJson,
   DEEPSEEK_WEEKDAY_UTC_PRICING_RULE,
   deepseekPricingBandAt,
   type ActorKind,
+  type DecisionAdmissionEvidence,
   type EventPayload,
 } from "@twofold/core";
 import type {
@@ -16,6 +18,8 @@ import {
   canonicalJson,
   type ArenaArtifactMaterial,
   type ArenaMarketSnapshot,
+  type ArenaPortfolioState,
+  type ArenaRoundInvocationFence,
   type BuiltArenaInputs,
 } from "./arena-inputs.js";
 import type { ArenaCostQuote } from "./arena-budget.js";
@@ -27,6 +31,14 @@ import { ARENA_PROJECTION_NAME, type ArenaProjectionState, type PreparedArenaInv
 import { retryExactRpcOnce } from "./exact-rpc.js";
 import { PRIVATE_ARTIFACT_BUCKET } from "./market-data.js";
 import type { FrozenHarnessUsage } from "./model-usage-buffer.js";
+import {
+  loadArenaPortfolioState,
+  type StrategyPortfolioStateRpcClient,
+} from "./portfolio-state-repository.js";
+import {
+  getEventStreamHead,
+  type EventStreamHeadRpcClient,
+} from "./stream-head-repository.js";
 
 interface MarketSnapshotRow {
   snapshot_id: string;
@@ -61,6 +73,32 @@ interface MarketBarFactRow {
   fact_sha256: string;
 }
 
+interface ArenaRoundRow {
+  round_id: string;
+  season_id: string;
+  round_index: string | number;
+  decision_snapshot_id: string;
+  decision_window_opens_at: string;
+  decision_window_closes_at: string;
+}
+
+interface ArenaRoundEntryRow {
+  round_entry_id: string;
+  round_id: string;
+  season_id: string;
+  entrant_id: string;
+  run_id: string;
+  decision_id: string;
+}
+
+export interface ArenaRoundEntrantFence extends ArenaRoundInvocationFence {
+  readonly roundEntryId: string;
+  readonly seasonId: string;
+  readonly entrantId: string;
+  readonly runId: string;
+  readonly snapshotId: string;
+}
+
 interface EventRow {
   event_id: string;
   stream_seq: string | number;
@@ -68,6 +106,13 @@ interface EventRow {
 
 interface ArtifactRow {
   artifact_id: string;
+}
+
+interface ReusableArtifactRow extends ArtifactRow {
+  artifact_kind: string;
+  content_type: string;
+  byte_size: string | number;
+  sha256: string;
 }
 
 interface InvocationRow extends EventRow {
@@ -230,6 +275,30 @@ function frozenClone<T>(value: T): T {
   return deepFreeze(structuredClone(value));
 }
 
+export function arenaArtifactRegistrationIdentity(input: {
+  readonly runScoped: boolean;
+  readonly artifactKind: string;
+  readonly sha256: string;
+  readonly runId: string;
+  readonly seasonId: string;
+  readonly workerId: string;
+}) {
+  return input.runScoped
+    ? Object.freeze({
+        idempotencyKey: `arena:${input.artifactKind}:${input.sha256}`,
+        runId: input.runId,
+        seasonId: input.seasonId,
+        createdBy: input.workerId,
+      })
+    : Object.freeze({
+        idempotencyKey:
+          `arena:season:${input.seasonId}:${input.artifactKind}:${input.sha256}`,
+        runId: null,
+        seasonId: input.seasonId,
+        createdBy: "twofold-bundle-registry",
+      });
+}
+
 /**
  * Stateful, single-invocation persistence boundary. Calls must be serialized by
  * the runtime so the optimistic run/projection sequence remains exact.
@@ -247,6 +316,9 @@ export class SupabaseArenaRepository {
         canonical: string;
         submissionId: string;
         acceptedAt: string;
+        admissionEvidenceCanonicalJson: string;
+        admissionEvidenceSha256: string;
+        admissionArtifactSha256: string;
       }
     | undefined;
 
@@ -258,20 +330,29 @@ export class SupabaseArenaRepository {
   }
 
   async latestMarketSnapshot(): Promise<ArenaMarketSnapshot> {
-    const snapshotResult = await this.#client
+    return this.marketSnapshot();
+  }
+
+  async marketSnapshot(snapshotId?: string): Promise<ArenaMarketSnapshot> {
+    let snapshotQuery = this.#client
       .from("market_snapshot")
       .select(
         "snapshot_id,source_version_id,manifest_sha256,cutoff_at,target_session_date,selection_policy,sealed_at,symbols",
-      )
-      .order("sealed_at", { ascending: false })
-      .order("snapshot_id", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      );
+    snapshotQuery = snapshotId === undefined
+      ? snapshotQuery
+          .order("sealed_at", { ascending: false })
+          .order("snapshot_id", { ascending: false })
+          .limit(1)
+      : snapshotQuery.eq("snapshot_id", snapshotId);
+    const snapshotResult = await snapshotQuery.maybeSingle();
     if (snapshotResult.error) {
       throw databaseFailure("read latest market snapshot", snapshotResult.error);
     }
     if (snapshotResult.data === null) {
-      throw new Error("no sealed real market snapshot is available");
+      throw new Error(snapshotId === undefined
+        ? "no sealed real market snapshot is available"
+        : `sealed market snapshot ${snapshotId} is unavailable`);
     }
     const snapshot = snapshotResult.data as MarketSnapshotRow;
 
@@ -285,7 +366,7 @@ export class SupabaseArenaRepository {
     }
     const members = (membersResult.data ?? []) as MarketSnapshotMemberRow[];
     if (members.length === 0 || members.length !== snapshot.symbols.length) {
-      throw new Error("latest market snapshot is incomplete");
+      throw new Error("market snapshot is incomplete");
     }
 
     const factsResult = await this.#client
@@ -338,6 +419,64 @@ export class SupabaseArenaRepository {
     });
   }
 
+  async roundEntrantFence(
+    roundId: string,
+    entrantId: string,
+  ): Promise<ArenaRoundEntrantFence> {
+    const [roundResult, entryResult] = await Promise.all([
+      this.#client.from("arena_round")
+        .select(
+          "round_id,season_id,round_index,decision_snapshot_id,decision_window_opens_at,decision_window_closes_at",
+        )
+        .eq("round_id", roundId)
+        .maybeSingle(),
+      this.#client.from("arena_round_entry")
+        .select("round_entry_id,round_id,season_id,entrant_id,run_id,decision_id")
+        .eq("round_id", roundId)
+        .eq("entrant_id", entrantId)
+        .maybeSingle(),
+    ]);
+    if (roundResult.error !== null) {
+      throw databaseFailure("read Arena Round fence", roundResult.error);
+    }
+    if (entryResult.error !== null) {
+      throw databaseFailure("read Arena Round entry", entryResult.error);
+    }
+    if (roundResult.data === null || entryResult.data === null) {
+      throw new Error("Arena Round or entrant seat is not registered");
+    }
+    const round = roundResult.data as ArenaRoundRow;
+    const entry = entryResult.data as ArenaRoundEntryRow;
+    if (
+      entry.round_id !== round.round_id
+      || entry.season_id !== round.season_id
+      || entry.entrant_id !== entrantId
+    ) {
+      throw new Error("Arena Round entrant seat does not match its shared fence");
+    }
+    return Object.freeze({
+      roundEntryId: entry.round_entry_id,
+      roundId: round.round_id,
+      roundIndex: String(round.round_index),
+      decisionId: entry.decision_id,
+      decisionAt: new Date(round.decision_window_opens_at).toISOString(),
+      submissionDeadlineAt: new Date(
+        round.decision_window_closes_at,
+      ).toISOString(),
+      seasonId: entry.season_id,
+      entrantId: entry.entrant_id,
+      runId: entry.run_id,
+      snapshotId: round.decision_snapshot_id,
+    });
+  }
+
+  async portfolioState(runId: string): Promise<ArenaPortfolioState> {
+    return loadArenaPortfolioState(
+      this.#client as unknown as StrategyPortfolioStateRpcClient,
+      runId,
+    );
+  }
+
   async prepareInvocation(inputs: BuiltArenaInputs): Promise<PreparedArenaInvocation> {
     if (this.#identity !== undefined) {
       throw new Error("Arena repository already owns an invocation");
@@ -347,12 +486,20 @@ export class SupabaseArenaRepository {
       uploadArtifact(this.#client, inputs.bundleArtifact),
     ]);
 
+    const currentHead = await getEventStreamHead(
+      this.#client as unknown as EventStreamHeadRpcClient,
+      inputs.identity.runId,
+      "run",
+    );
+    this.#runStreamSeq = currentHead.sequence;
+
     const staged = await this.#appendRawEvent({
       streamId: inputs.identity.runId,
       decisionId: inputs.identity.decisionId,
-      expectedSeq: "0",
+      expectedSeq: this.#runStreamSeq,
       eventType: "decision.inputs_staged",
       eventTime: inputs.identity.decisionAt,
+      idempotencyKey: `arena:${inputs.identity.decisionId}:inputs-staged`,
       payload: {
         decisionId: inputs.identity.decisionId,
         packetSha256: inputs.packetArtifact.sha256,
@@ -611,9 +758,14 @@ export class SupabaseArenaRepository {
   }
 
   async acceptSubmission(
-    submission: PortfolioTargetsSubmission,
+    input: {
+      submission: PortfolioTargetsSubmission;
+      acceptedAt: string;
+      admissionEvidence: DecisionAdmissionEvidence;
+    },
   ): Promise<PersistedArenaSubmission> {
     const identity = this.#requireIdentity();
+    const { submission } = input;
     if (submission.session_id !== identity.rootSessionId) {
       throw new Error("only the bound root Harness Session may submit portfolio targets");
     }
@@ -623,7 +775,17 @@ export class SupabaseArenaRepository {
     ) {
       throw new Error("submission decision packet fence does not match this invocation");
     }
-    const canonical = canonicalJson(submission);
+    const admissionEvidenceCanonicalJson = canonicalFinancialJson(
+      input.admissionEvidence,
+    );
+    const admissionArtifactSha256 = createHash("sha256")
+      .update(admissionEvidenceCanonicalJson, "utf8")
+      .digest("hex");
+    const canonical = canonicalJson({
+      submission,
+      acceptedAt: input.acceptedAt,
+      admissionEvidence: input.admissionEvidence,
+    });
     if (
       this.#submissionAttempt !== undefined
       && this.#submissionAttempt.canonical !== canonical
@@ -633,10 +795,19 @@ export class SupabaseArenaRepository {
     this.#submissionAttempt ??= {
       canonical,
       submissionId: randomUUID(),
-      acceptedAt: new Date().toISOString(),
+      acceptedAt: input.acceptedAt,
+      admissionEvidenceCanonicalJson,
+      admissionEvidenceSha256: input.admissionEvidence.evidenceSha256,
+      admissionArtifactSha256,
     };
-    const { submissionId, acceptedAt } = this.#submissionAttempt;
-    const result = await this.#client.rpc("accept_portfolio_targets", {
+    const {
+      submissionId,
+      acceptedAt,
+      admissionEvidenceCanonicalJson: frozenEvidenceCanonicalJson,
+      admissionEvidenceSha256,
+      admissionArtifactSha256: frozenAdmissionArtifactSha256,
+    } = this.#submissionAttempt;
+    const result = await this.#client.rpc("accept_portfolio_targets_with_evidence", {
       // Stable across a transport-level retry. The RPC also compares every
       // material field, so reusing this key with different content fails closed.
       p_idempotency_key: `arena:${identity.decisionId}:submission`,
@@ -648,11 +819,20 @@ export class SupabaseArenaRepository {
       p_cash_weight_bps: submission.cash_weight_bps,
       p_decision_summary: submission.decision_summary,
       p_accepted_at: acceptedAt,
+      p_admission_evidence: input.admissionEvidence,
+      p_admission_evidence_canonical_json: frozenEvidenceCanonicalJson,
+      p_admission_evidence_sha256: admissionEvidenceSha256,
+      p_admission_artifact_sha256: frozenAdmissionArtifactSha256,
       p_expected_run_stream_seq: this.#runStreamSeq,
       p_recorded_by: this.#workerId,
     });
-    if (result.error) throw databaseFailure("accept_portfolio_targets", result.error);
-    const row = firstRow<SubmissionRow>(result.data, "accept_portfolio_targets");
+    if (result.error) {
+      throw databaseFailure("accept_portfolio_targets_with_evidence", result.error);
+    }
+    const row = firstRow<SubmissionRow>(
+      result.data,
+      "accept_portfolio_targets_with_evidence",
+    );
     this.#runStreamSeq = sequence(row.source_stream_seq);
     return {
       submissionId: row.submission_id,
@@ -671,10 +851,37 @@ export class SupabaseArenaRepository {
     metadata: EventPayload;
   }): Promise<ArtifactRow> {
     assertJsonValue(input.metadata);
+    if (!input.runScoped) {
+      const existing = await this.#client.from("artifact_metadata")
+        .select("artifact_id,artifact_kind,content_type,byte_size,sha256")
+        .eq("storage_bucket", PRIVATE_ARTIFACT_BUCKET)
+        .eq("object_path", input.material.objectPath)
+        .maybeSingle<ReusableArtifactRow>();
+      if (existing.error !== null) {
+        throw databaseFailure("read reusable Arena artifact", existing.error);
+      }
+      if (existing.data !== null) {
+        if (
+          existing.data.artifact_kind !== input.artifactKind
+          || existing.data.content_type !== "application/json"
+          || String(existing.data.byte_size) !== input.material.byteSize
+          || existing.data.sha256 !== input.material.sha256
+        ) throw new Error("reusable Arena artifact metadata conflicts with its bytes");
+        return { artifact_id: existing.data.artifact_id };
+      }
+    }
+    const identity = arenaArtifactRegistrationIdentity({
+      runScoped: input.runScoped,
+      artifactKind: input.artifactKind,
+      sha256: input.material.sha256,
+      runId: input.inputs.identity.runId,
+      seasonId: input.inputs.identity.seasonId,
+      workerId: this.#workerId,
+    });
     const result = await this.#client.rpc("register_artifact", {
-      p_idempotency_key: `arena:${input.artifactKind}:${input.material.sha256}`,
-      p_run_id: input.runScoped ? input.inputs.identity.runId : null,
-      p_season_id: input.inputs.identity.seasonId,
+      p_idempotency_key: identity.idempotencyKey,
+      p_run_id: identity.runId,
+      p_season_id: identity.seasonId,
       p_source_event_id: input.sourceEventId,
       p_artifact_kind: input.artifactKind,
       p_storage_bucket: PRIVATE_ARTIFACT_BUCKET,
@@ -685,7 +892,7 @@ export class SupabaseArenaRepository {
       // A reusable content-addressed Bundle must resolve identically when a
       // different worker later runs the same bytes. Run-scoped packet authors
       // remain attributable to the concrete worker.
-      p_created_by: input.runScoped ? this.#workerId : "twofold-bundle-registry",
+      p_created_by: identity.createdBy,
       p_metadata: input.metadata,
       p_supersedes_artifact_id: null,
     });

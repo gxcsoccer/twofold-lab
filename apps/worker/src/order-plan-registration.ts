@@ -111,6 +111,9 @@ export function buildFrozenOrderPlanRegistration(input: {
       ...order,
       executionModel: plan.executionModel,
       slippageBps: plan.slippageBps,
+      ...(plan.maxParticipationBps === undefined
+        ? {}
+        : { maxParticipationBps: plan.maxParticipationBps }),
       feeTermsSha256: sha256Utf8(order.feeScheduleTerms),
     });
   });
@@ -127,6 +130,15 @@ export function buildFrozenOrderPlanRegistration(input: {
     executionModel: plan.executionModel,
     slippageBps: plan.slippageBps,
     fillPriceScale: plan.fillPriceScale,
+    ...(plan.maxParticipationBps === undefined
+      ? {}
+      : {
+          maxParticipationBps: requireBoundedInteger(
+            plan.maxParticipationBps,
+            "plan.maxParticipationBps",
+            10_000n,
+          ),
+        }),
     enginePlanFingerprint: plan.planFingerprint,
     enginePlanFingerprintSha256,
     orders: Object.freeze(wrappedOrders),

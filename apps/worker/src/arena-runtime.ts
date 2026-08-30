@@ -9,6 +9,7 @@ import type {} from "@deepseek-ai/dsh-agent-presets";
 import {
   boot,
   healProfilesModuleFallback,
+  loadOverlayPatches,
   loadProfile,
 } from "@deepseek-ai/dsh-app-boot";
 import {
@@ -35,6 +36,7 @@ import {
   type TwofoldDecisionGateway,
 } from "@twofold-lab/dsh-twofold";
 import {
+  type DecisionAdmissionEvidence,
   totalBillableTokens,
   type ActorKind,
   type EventPayload,
@@ -58,15 +60,21 @@ import type {
   ArenaProjectionState,
   PreparedArenaInvocation,
 } from "./arena-types.js";
+import { arenaRootMaxTokens } from "./arena-root-output-budget.js";
 import {
   HarnessUsageAttemptBuffer,
   type FrozenHarnessUsage,
   type HarnessUsageAttemptKey,
 } from "./model-usage-buffer.js";
 import { sanitizeFailureMessage } from "./failure-safety.js";
+import { portfolioConstraintViolation } from "./arena-inputs.js";
+import { buildArenaDecisionAdmissionEvidence } from
+  "./arena-decision-evidence.js";
+import { importArenaRuntimePackage } from
+  "./arena-runtime-package-manifest.js";
 
 const PROFILE_NAME = "twofold";
-const PRESET_ID = "twofold-orchestrator";
+const TRUSTED_PRESETS = new Set(["twofold", "twofold-orchestrator"]);
 const LOCKED_PROVIDER = "deepseek-official";
 const LOCKED_MODEL = "deepseek-v4-pro";
 const RUNTIME_NAME = "twofold-arena-worker";
@@ -125,7 +133,11 @@ export interface ArenaRuntimePersistence {
     frozenUsage: FrozenHarnessUsage;
   }): Promise<PersistedAttemptReceipt>;
 
-  acceptSubmission(submission: PortfolioTargetsSubmission): Promise<{
+  acceptSubmission(input: {
+    submission: PortfolioTargetsSubmission;
+    acceptedAt: string;
+    admissionEvidence: DecisionAdmissionEvidence;
+  }): Promise<{
     submissionId: string;
     acceptedAt: string;
     eventId: string;
@@ -175,6 +187,11 @@ export interface ArenaRuntimeResult {
 export interface CreateArenaRuntimeOptions {
   readonly repositoryRoot: string;
   readonly workerId: string;
+  readonly installAnchor?: string;
+  readonly profileBundlePatchPaths?: readonly string[];
+  readonly profileDirectory?: string;
+  readonly profileModuleHealing?: boolean;
+  readonly runtimePackageManifest?: boolean;
   readonly now?: () => Date;
 }
 
@@ -240,6 +257,13 @@ export function hasRegisteredArenaDescendant(
   );
 }
 
+export function isArenaDescendantRequirementSatisfied(
+  executionClass: "ROOT_ONLY" | "ORCHESTRATED",
+  projection: ArenaProjectionState,
+): boolean {
+  return executionClass === "ROOT_ONLY" || hasRegisteredArenaDescendant(projection);
+}
+
 function asIso(milliseconds: number): string {
   return new Date(milliseconds).toISOString();
 }
@@ -270,6 +294,33 @@ function compareDecimal(left: string, right: string): number {
   const scaledA = a.coefficient * ten(scale - a.scale);
   const scaledB = b.coefficient * ten(scale - b.scale);
   return scaledA < scaledB ? -1 : scaledA > scaledB ? 1 : 0;
+}
+
+export function arenaBudgetEnforcementStatus(
+  projection: Pick<ArenaProjectionState, "treeUsage" | "budget">,
+  denials: Readonly<{
+    providerBudgetDenied: boolean;
+    descendantBudgetDenied: boolean;
+  }>,
+): ArenaProjectionState["budget"]["enforcementStatus"] {
+  const { treeUsage: tree, budget } = projection;
+  const requestLimitReached =
+    BigInt(tree.providerRequestCount) >= BigInt(budget.maxProviderRequests);
+  const tokenLimitReached =
+    BigInt(tree.totalBillableTokens) >= BigInt(budget.maxBillableTokens);
+  const costLimitReached = tree.estimatedCostUsd !== null
+    && compareDecimal(tree.estimatedCostUsd, budget.maxEstimatedCostUsd) >= 0;
+  if (
+    denials.providerBudgetDenied
+    || denials.descendantBudgetDenied
+    || requestLimitReached
+    || tokenLimitReached
+    || costLimitReached
+  ) return "EXHAUSTED";
+  if (BigInt(tree.providerRequestCount) > 0n && tree.costStatus !== "ESTIMATED") {
+    return "UNPRICED";
+  }
+  return "WITHIN_LIMITS";
 }
 
 function safeAgentPathSegment(sessionId: string): string {
@@ -328,9 +379,30 @@ function sessionEventPayload(event: SessionEvent): EventPayload {
   return common;
 }
 
+function rootDecisionSymbolCount(prepared: PreparedArenaInvocation): number {
+  const constraints = prepared.packet.payload.constraints;
+  if (
+    constraints === null
+    || typeof constraints !== "object"
+    || Array.isArray(constraints)
+  ) throw new TypeError("Arena packet constraints are missing");
+  const eligible = (constraints as Record<string, unknown>).eligible_symbols;
+  if (
+    !Array.isArray(eligible)
+    || eligible.length === 0
+    || eligible.some((symbol) => typeof symbol !== "string")
+  ) throw new TypeError("Arena packet eligible symbols are invalid");
+  return eligible.length;
+}
+
 function assertPreparedInvocation(prepared: PreparedArenaInvocation): void {
   const { identity, packet, projection } = prepared;
-  if (identity.presetId !== PRESET_ID) throw new Error(`Arena preset must be ${PRESET_ID}`);
+  if (!TRUSTED_PRESETS.has(identity.presetId)) {
+    throw new Error("Arena preset is not in the trusted host allowlist");
+  }
+  if (identity.executionClass !== "ROOT_ONLY" && identity.executionClass !== "ORCHESTRATED") {
+    throw new Error("Arena execution class is unsupported");
+  }
   if (identity.provider !== LOCKED_PROVIDER || identity.model !== LOCKED_MODEL) {
     throw new Error(`Arena model must be ${LOCKED_PROVIDER}/${LOCKED_MODEL}`);
   }
@@ -466,32 +538,10 @@ class ActiveArenaRun {
       ).length,
     );
 
-    const requestLimitReached =
-      BigInt(tree.providerRequestCount) >= BigInt(budget.maxProviderRequests);
-    const tokenLimitReached =
-      BigInt(tree.totalBillableTokens) >= BigInt(budget.maxBillableTokens);
-    const costLimitReached = tree.estimatedCostUsd !== null
-      && compareDecimal(tree.estimatedCostUsd, budget.maxEstimatedCostUsd) >= 0;
-    const descendantLimitReached =
-      BigInt(this.projection.agents.filter((agent) => agent.origin === "subagent").length)
-        >= BigInt(budget.maxDescendants);
-    if (
-      this.providerBudgetDenied
-      || this.descendantBudgetDenied
-      || requestLimitReached
-      || tokenLimitReached
-      || costLimitReached
-      || descendantLimitReached
-    ) {
-      budget.enforcementStatus = "EXHAUSTED";
-    } else if (
-      BigInt(tree.providerRequestCount) > 0n
-      && tree.costStatus !== "ESTIMATED"
-    ) {
-      budget.enforcementStatus = "UNPRICED";
-    } else {
-      budget.enforcementStatus = "WITHIN_LIMITS";
-    }
+    budget.enforcementStatus = arenaBudgetEnforcementStatus(this.projection, {
+      providerBudgetDenied: this.providerBudgetDenied,
+      descendantBudgetDenied: this.descendantBudgetDenied,
+    });
   }
 
   private async projectCurrent(): Promise<void> {
@@ -530,7 +580,7 @@ class ActiveArenaRun {
       {
         decisionId: this.prepared.identity.decisionId,
         rootHarnessSessionId: this.rootSessionId,
-        presetId: PRESET_ID,
+        presetId: this.prepared.identity.presetId,
         provider: LOCKED_PROVIDER,
         model: LOCKED_MODEL,
       },
@@ -838,7 +888,6 @@ class ActiveArenaRun {
     if (previous !== undefined && previous.finalized === undefined) {
       await this.finalizeAttempt(previous);
     }
-
     return this.serial.run(async () => {
       this.serial.throwBackgroundFailure();
       const active = this.activeSteps.get(sessionId);
@@ -1195,18 +1244,42 @@ class ActiveArenaRun {
       this.deadlineExceeded ||= this.expired;
       return this.rejectSubmission("DECISION_CLOSED", "Decision is closed or past its submission deadline");
     }
+    const policyViolation = portfolioConstraintViolation(submission, this.packet);
+    if (policyViolation !== undefined) {
+      return this.rejectSubmission("PORTFOLIO_POLICY_VIOLATION", policyViolation);
+    }
 
     return this.serial.run(async () => {
       // Descendant registration is serialized on the same queue. Reaching this
       // check therefore proves at least one durable child lineage edge exists,
       // rather than merely observing an in-flight subagent tool call.
-      if (!hasRegisteredArenaDescendant(this.projection)) {
+      if (!isArenaDescendantRequirementSatisfied(
+        this.prepared.identity.executionClass,
+        this.projection,
+      )) {
         return this.persistSubmissionRejection(
           "DESCENDANT_REQUIRED",
           "The orchestrated contestant must register at least one research subagent before submitting",
         );
       }
-      const accepted = await this.persistence.acceptSubmission(submission);
+      const acceptedAt = this.now().toISOString();
+      const admissionEvidence = buildArenaDecisionAdmissionEvidence({
+        identity: this.prepared.identity,
+        packet: this.packet,
+        submission,
+        acceptedAt,
+      });
+      if (admissionEvidence.guardAction !== "ALLOW") {
+        return this.persistSubmissionRejection(
+          "ADMISSION_GUARD_BLOCKED",
+          `Decision admission blocked: ${admissionEvidence.reasons.join(",")}`,
+        );
+      }
+      const accepted = await this.persistence.acceptSubmission({
+        submission,
+        acceptedAt,
+        admissionEvidence,
+      });
       this.runStreamSeq = accepted.eventSeq;
       this.acceptedSubmission = {
         canonical,
@@ -1493,8 +1566,10 @@ export class ArenaRuntime {
   private constructor(
     private readonly ctx: Context,
     private readonly coordinator: ArenaCoordinator,
-    private readonly options: Required<Omit<CreateArenaRuntimeOptions, "now">> & {
-      now: () => Date;
+    private readonly options: {
+      readonly repositoryRoot: string;
+      readonly workerId: string;
+      readonly now: () => Date;
     },
   ) {}
 
@@ -1512,9 +1587,28 @@ export class ArenaRuntime {
     }
     process.env.DSH_HOME = repositoryRoot;
 
-    const workerPackageJson = fileURLToPath(new URL("../package.json", import.meta.url));
-    healProfilesModuleFallback(workerPackageJson, repositoryRoot);
-    const profile = loadProfile(RUNTIME_NAME, PROFILE_NAME, workerPackageJson, repositoryRoot);
+    const workerPackageJson = resolve(
+      options.installAnchor
+        ?? fileURLToPath(new URL("../package.json", import.meta.url)),
+    );
+    if (options.profileModuleHealing !== false) {
+      healProfilesModuleFallback(workerPackageJson, repositoryRoot);
+    }
+    const profileDirectory = resolve(/* turbopackIgnore: true */
+      options.profileDirectory ?? join(repositoryRoot, "profiles", PROFILE_NAME),
+    );
+    const profile = options.profileBundlePatchPaths === undefined
+      ? loadProfile(RUNTIME_NAME, PROFILE_NAME, workerPackageJson, repositoryRoot)
+      : {
+          dir: profileDirectory,
+          layers: options.profileBundlePatchPaths.map((patchPath) => ({
+            patches: loadOverlayPatches(RUNTIME_NAME, resolve(patchPath)),
+          })),
+          patches: loadOverlayPatches(
+            RUNTIME_NAME,
+            join(profileDirectory, "cordis.patch.yml"),
+          ),
+        };
     const patches: PatchOptions[] = [
       ...profile.layers.flatMap((layer) => layer.patches),
       ...profile.patches,
@@ -1527,6 +1621,16 @@ export class ArenaRuntime {
       join(profile.dir, "cordis.yml"),
       structuredClone(patches),
       (hostCtx) => {
+        if (options.runtimePackageManifest === true) {
+          const loader = hostCtx.loader as unknown as {
+            internal: {
+              import(specifier: string): Promise<unknown>;
+            } | undefined;
+          };
+          loader.internal = {
+            import: (specifier: string) => importArenaRuntimePackage(specifier),
+          };
+        }
         hostCtx.provide(DECISION_GATEWAY_SERVICE, coordinator);
         hostCtx.on("session/created", (session) => coordinator.onSessionCreated(session));
         hostCtx.on("session/event", (session, event) => coordinator.onSessionEvent(session, event));
@@ -1588,16 +1692,21 @@ export class ArenaRuntime {
           sessionId: SessionId(input.prepared.identity.rootSessionId),
           meta: {
             cwd: this.options.repositoryRoot,
-            agentPreset: PRESET_ID,
+            agentPreset: input.prepared.identity.presetId,
           },
           agentOptions: {
             provider: LOCKED_PROVIDER,
             model: LOCKED_MODEL,
-            maxTokens: 8_192,
+            maxTokens: arenaRootMaxTokens(
+              rootDecisionSymbolCount(input.prepared),
+            ),
           },
           signal,
           setup: async (agentCtx) => {
-            await this.ctx.agentPresets.mount(agentCtx, PRESET_ID);
+            await this.ctx.agentPresets.mount(
+              agentCtx,
+              input.prepared.identity.presetId,
+            );
             const tools = (agentCtx as Context & { tools: ArenaToolRuntimeView }).tools;
             tools.guard((execution) => this.coordinator.guardTool(
               execution.name,

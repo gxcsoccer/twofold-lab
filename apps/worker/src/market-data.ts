@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import { isLosslessNumber, parse } from "lossless-json";
 
+import { boundedProviderSignal } from "./provider-deadline.js";
+
 const SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,14}$/;
 const JSON_NUMBER_PATTERN = /^(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/;
 const SESSION_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -360,6 +362,7 @@ export async function fetchAlpacaDailyBars(
   requestUrl.searchParams.set("limit", "10000");
 
   const requestFingerprint = sha256(requestUrl.toString());
+  const providerSignal = boundedProviderSignal(options.signal);
   const rawPages: Array<{
     requestUrl: string;
     httpStatus: number;
@@ -389,7 +392,7 @@ export async function fetchAlpacaDailyBars(
         Accept: "application/json",
       },
       redirect: "error",
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      signal: providerSignal,
     });
     if (firstObservedAt === undefined) firstObservedAt = now().toISOString();
     const pageBody = await response.text();

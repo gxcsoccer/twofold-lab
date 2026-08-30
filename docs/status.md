@@ -1,226 +1,200 @@
 # Implementation status
 
-Updated: 2026-08-28.
+Updated: 2026-08-30 (Asia/Shanghai).
 
-## Complete in Milestone 0
+## Current production outcome
 
-- Out-of-tree DeepSeek Harness bundle and dedicated `twofold` preset.
-- `deepseek-official/deepseek-v4-pro` catalog, default, and request-hook locks.
-- Two model-facing domain tools with a deny-by-default capability boundary.
-- Separate `twofold-orchestrator` preset with one foreground-only, depth-one,
-  tool-free research subagent and a descendant-aware deny-all executor guard.
-- Canonical decimal-string contracts for weights and durable JSON values.
-- Supabase append-only event, projection, control-command, worker-lease, and
-  artifact migration with RLS and audited RPC boundaries.
-- Exact Harness Token normalization, high-precision cost estimation,
-  immutable pricing/usage tables, and idempotent registration RPCs.
-- Persistent worker command-claim/lease scaffold.
-- Next.js operational console with real-data status, Setup Required, Season,
-  Run, Audit, Settings, Token/cost metrics and budgets, health, and
-  Realtime-invalidation states; runtime demo data has been removed.
-- Alpaca SIP/raw/1Day adapter with lossless JSON-number normalization, trusted
-  origin/redirect protection, complete pagination, private content-addressed
-  Storage upload, completed-session checks, and one-shot ingestion.
-- Immutable source-version, Raw artifact, delivery observation, reusable
-  daily-bar fact, delivery/fact edge, same-session sealed snapshot, and exact
-  snapshot-member provenance with service-role-only RPCs.
-- Dedicated `twofold-lab` Supabase project in Singapore with all twelve
-  migrations applied, including the Arena decision slice, frozen V4 Pro price
-  card, exact projection retry, database-arrival submission deadline,
-  accounting kernel, atomic S2 settlement, and UUID-helper hardening. Migration
-  013 replaces the cycle admission function in place of editing applied history.
-- Real Alpaca SIP ingestion verified for the completed 2026-08-21 session:
-  30 daily-bar facts were archived for the lookback window and one sealed
-  LULU/QQQ/SPY snapshot was persisted with its private Raw object and exact
-  delivery/fact provenance.
-- Remote transactional pgTAP runner that works without local Docker; current
-  control-plane, market-data, Arena, accounting, and settlement/cycle contracts
-  pass 19/19, 41/41, 46/46, 92/92, and 105/105 respectively (303/303 total),
-  including after real market/Agent rows exist.
-- Keyless typecheck, unit-test, production-build, Harness-contract, and profile
-  composition checks.
-- Trusted-host `twofold-orchestrator` runtime with one root Session, exactly one
-  foreground research child, a packet-scoped read tool, and root-only durable
-  target submission.
-- Worker persistence for decision packet/Bundle artifacts, root/child lineage,
-  exact physical model attempts, immutable usage facts, and a redacted live
-  Agent-tree projection.
-- Tree-wide pre-dispatch reservation for provider requests, conservative input
-  Token bounds, maximum output Tokens, and versioned estimated USD cost. Missing
-  pricing or provider usage fails closed.
-- Real Agent dogfood succeeded on sealed Alpaca snapshot
-  `4ddd7b7f-6d16-48f7-8952-b61bd06f88d0`: decision
-  `30908825-6f45-4551-b677-6df4b047384b` produced one root plus one child,
-  four priced requests, 13,641 billable Tokens, estimated cost `$0.012078132`,
-  and one accepted paper target portfolio. No dogfood/runtime frozen-plan
-  registration, fill, or accounting event exists.
-- Dashboard decision route renders the real immutable fence, Session tree,
-  per-Agent Token/cost attribution, shared budget, and accepted-submission fact.
+`private-us-liquid-100-s4` is the active production Season behind the
+authenticated Vercel dashboard. It is the first clean activation in which both
+the root-only and orchestrated DeepSeek entrants completed a real 100-symbol
+decision and froze deterministic S1 plans.
 
-## Implemented accounting kernel slice (not yet end-to-end settlement)
+- Season ID: `1486ba8e-47ae-5774-ba44-5c26f9359eeb`.
+- Round 1 ID: `d83eff85-da7b-5e07-81d6-d4feaf4d9839`.
+- Frozen universe: exactly 100 common stocks, including the mandatory current
+  holding LULU; artifact SHA-256
+  `900de98ab433e769818c6ef419a0a8594562e09c1a1360aba54d5b395dc73b3c`.
+- Opening market snapshot: `e502936c-1c97-49d5-9351-deb16721cb5b`, with the
+  exact same 100-symbol member set for 2026-08-28.
+- Equal genesis: each isolated paper account holds exactly `150 LULU` and zero
+  cash. Both opening Liquidation NAV values are `$18,118.66` and rank 1.
+- The accounts were initialized at `2026-08-29T21:20:32Z`, before the immutable
+  Season/decision opening at `2026-08-29T21:28:55.699Z`.
+- Round 1 has two entrant seats and all 16 items in its eight-phase durable DAG.
+- The static start gate reports `READY_FOR_S1`: two accepted decisions, two
+  frozen S1 plans, four successful pre-S1 work items, a live production Worker,
+  the correct active Season, and no operational alerts.
+- S1 executes on 2026-08-31 and S2 on 2026-09-01; final ranking follows the S2
+  close evidence boundary.
 
-- BigInt-backed exact decimal arithmetic rejects JavaScript/JSON numbers at
-  financial boundaries.
-- Source-bound `twofold.initial_portfolio/v1` validation, deterministic FIFO
-  lot ordering, balanced opening journals, and a read-only CLI. No holdings are
-  imported because no real Futu statement/tax-lot file has been supplied.
-- Immutable balanced ledger replay with duplicate protection, integer security
-  quantities, no shorts, and no negative ASSET balance/no implicit margin.
-- Versioned Futu fee formulas and golden cases. Plans retain exact canonical fee
-  terms; simulations restore those frozen bytes, so a later registry edit does
-  not alter historical replay.
-- Strict per-disposition FIFO shadow-tax reserve, dividend state, three NAV
-  views, liquidation estimates, and Round/Season reducers. Same-id/date exact
-  retries are idempotent; changed payloads fail closed.
-- D-close S1 sell planning and S1-close S2 buy planning with frozen slippage,
-  precision, tax rules, dates, prices, fee terms, buying-power evidence, and a
-  complete canonical engine fingerprint. Pure S1/S2 simulations cover FIFO
-  sells, tax locks, stable buy priority, cash-limited fills, and new lots.
-- Tested Worker adapter and exact-retry RPC repository primitives
-  create/register the exact database order-plan envelope, including
-  run/decision/accepted-submission identity, engine fingerprint SHA, and each
-  fee-terms SHA. The database contract stores exact bytes immutably. These
-  primitives are not yet wired into the dogfood decision runtime or scheduler.
+No live-broker capability exists. Every order and fill is simulated.
 
-## Implemented atomic S2 settlement slice (not runtime-wired)
+## Real decision results
 
-- `settle_paper_fill` locks one strategy-account ledger head, enforces CAS and
-  strict frozen order priority, and derives S2 simulated BUY results from
-  trusted official-open evidence. It never accepts caller-supplied fill amounts,
-  fees, postings, lots, or balances.
-- Current ledger cash and frozen remaining buying power form a hard `min(...)`
-  fence. The database derives the maximum affordable integer shares, exact
-  frozen per-order Futu fees, cash journal, lot, acquisition USD/CNY evidence
-  binding, and next head atomically.
-- A zero-affordable order is persisted as `CANCELED_CASH_LIMIT`, advances the
-  audit head once, and creates no fill quantity, journal, lot, fee, or claimed
-  FX use. Positive fills require acquisition FX evidence.
-- Settlement, journal, and lot IDs use deterministic UUIDv8 derivation. Genesis,
-  request, settlement, and chained-head hashes bind stable idempotency/content
-  identities rather than random row UUIDs, so clean-database logical replay
-  reproduces the same hashes.
-- Worker responses are exact-field, string-only contracts. UUIDv8, lowercase
-  canonical inputs, millisecond timestamps, arithmetic reconciliation,
-  initialization identity, stale-head handling, and commit-after-client-reject
-  recovery are covered by tests.
-- Evidence authority is source-kind matched and immutable. Alpaca daily bars
-  cannot enter the official-auction boundary; service role cannot self-report
-  official price or tax-FX evidence or bypass settlement with standalone lots
-  or generic fill journals.
-- Remote production tables currently contain zero ledger heads, official-price
-  evidence rows, tax-FX evidence rows, and settlements. No demo or test trade
-  was retained.
+Both entrants read the same content-addressed decision packet and passed the
+same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
 
-## Implemented accepted-target replay cycle
+- `twofold` selected 10 positions plus 5% cash. It retained LULU at 6% and used
+  packet-provided liquidity and 5/20/60-day momentum features. The complete
+  tree used 2 Provider requests, 28,625 billable tokens, and an estimated
+  `$0.027609`.
+- `twofold-orchestrator` used one independent research descendant, then applied
+  a risk and correlation review. It selected 10 positions plus 10% cash and
+  retained LULU at 3%. The complete tree used its allowed 4 Provider requests,
+  71,606 billable tokens, and an estimated `$0.051736`.
+- Every accepted symbol, weight, rationale, cash allocation, decision summary,
+  and submission hash is now visible on the read-only Agent decision page.
 
-- `runAcceptedTargetCycle` consumes one already accepted submission and frozen
-  opening/evidence state, derives S1 sells, strict CNY FIFO tax reserve, S2 buys,
-  one replayed ledger, final positions, and all three NAVs without another model call.
-- Opening and settlement journals now share the same generic account IDs and
-  gross-cost inventory semantics, so one ledger replay covers the whole lifecycle.
-- Array order inside the hashed artifact is compared by code point, never by
-  `localeCompare`: ICU collation is locale- and version-dependent (it orders
-  `equity:opening-balance` before `equity.opening_balance`), so the content
-  address would otherwise depend on the host runtime. One frozen digest in the
-  Core suite pins this.
-- The Worker primitives register both frozen plans and commit one exact cycle
-  artifact with deterministic UUIDv8 identity and one byte-identical recovery
-  attempt. Nothing in the runtime calls them yet; see "Deliberately not complete".
-- Supabase migration 011 validates the submission/account/plan bindings, exact
-  bytes/hash, READY order conservation, ledger/final-head shape, and NAV arithmetic,
-  then atomically appends the run event and `dashboard.accepted_target_cycle` projection.
-- Supabase migration 013 closes four gaps in that admission function: both
-  `plan.orders` arrays must exist (a missing key made `jsonb_array_length` return
-  NULL and silently disabled the conservation comparison); the artifact's plan
-  bytes are bound to `engine_plan_fingerprint`, which is the complete canonical
-  plan JSON rather than a label; the strategy ledger head is locked, matched
-  against the artifact's opening head, required to advance exactly once per
-  settlement, and moved to `finalLedgerHead` in the same transaction; and
-  `source_stream_seq` no longer participates in the idempotent-replay identity
-  comparison, so a restarted Worker's byte-identical retry is not misreported as
-  a content conflict. Without the head fence two decisions in one run could each
-  derive from the same balances, because the run-stream CAS orders events only.
-- Realized tax is an accounting balance in CNY only. The trading-currency reserve
-  that feeds the NAV deduction and the S2 buying-power fence is converted at each
-  disposition's own FX rate, so once a cycle sells at more than one rate no single
-  rate reconciles the two views. The cycle asserts the exact side: every CNY the
-  settlements accrue must appear in the replayed `liability.china_tax_accrual`,
-  and inventory must equal the summed gross cost.
-- Supabase migration 012 adds one read-only causal readiness boundary. It reports
-  only the first durable blocker (`decision` → accepted submission → strategy
-  account → ledger head), `READY_FOR_INPUT_BUILD`, or the exact completed cycle.
-  It deliberately does not pre-approve later official-open, calendar, or FX evidence.
-- The decision page renders completed S1/S2 counts, ledger head, artifact hash,
-  and Broker/Tax-reserved/Liquidation NAV. Before completion it renders the exact
-  causal readiness code instead of a generic execution placeholder.
-- A development-only E2E route is guarded by both `NODE_ENV != production` and
-  `TWOFOLD_E2E=true`; Ego Lite verified blocked and completed fixtures plus the
-  real `STRATEGY_ACCOUNT_MISSING` decision at desktop and 390px widths.
+## Architecture now in production
 
-## Confirmed product direction (architecture, not implementation)
+### Frozen universe and activation
 
-- The primary Arena entrant is a complete, immutable DSH Agent Bundle. One
-  decision consists of its root Harness Session and every descendant Session in
-  the resulting Agent tree.
-- Controlled Lab is a separate instruction-only ablation track; its No Skill,
-  UZI, and ai-berkshire variants are not substitutes for full-Bundle Arena
-  entrants.
-- Arena owns the non-bypassable data fence, tree-wide budget, single accepted
-  submission, and deterministic execution boundary.
-- All descendant provider usage must be attributed to the root invocation and
-  aggregated exactly once. External untrusted Bundles require process/container
-  isolation. The GUI already exposes the trusted-host redacted Agent tree and
-  remaining budget; the same contract must extend to general entrants.
+- Universe research is a content-addressed artifact, not a mutable environment
+  list. It freezes source URLs and hashes, eligibility evidence, liquidity rank,
+  5/20/60-day returns, 20-session median dollar volume, selection reasons, and
+  stable instrument identities.
+- The builder joins active/tradable Alpaca assets with Nasdaq stock and traded-
+  security catalogs, excludes ETFs and test issues, and requires common-stock
+  identity, at least 120 sessions of history, a `$5` close, and `$20M` median
+  20-session dollar volume.
+- LULU is mandatory only while it passes every eligibility rule.
+- A reusable preparation command binds an existing artifact to an exact sealed
+  snapshot and future opening boundary. It rejects date/member mismatches and
+  ensures account initialization can complete before decision time.
+- Runtime config discovery is by claimed Season identity. Multiple immutable
+  universes and Seasons coexist without one global symbol switch.
 
-The general multi-entrant product contract remains broader than this trusted
-host dogfood slice; the runtime and GUI bullets above are implemented today.
+### Budget proportional to the decision surface
 
-## Deliberately not complete
+- The old fixed limits worked for a small pool but did not represent the cost of
+  replaying a 100-symbol packet through a root/descendant/root workflow.
+- Root output capacity now starts at 8,192 for up to 32 symbols, adds 128 per
+  additional symbol, and stops at 32,768. A 100-symbol root receives 16,896.
+- The tree-wide billable-token ceiling starts at 120,000, adds 2,048 per
+  additional symbol, and stops at 512,000. A 100-symbol tree receives 259,264.
+- Provider-request, estimated-cost, descendant, deadline, and tool fences remain
+  independent hard limits. Every reservation and settlement remains part of the
+  immutable event stream.
 
-- The causal seed-readiness gate is deployed, but its Worker input builder and
-  durable scheduler wiring still do not load real opening state or authorize
-  trusted execution/calendar/FX evidence before invoking the cycle handoff.
-  Concretely: nothing in `worker.ts`, `main.ts`, `dogfood-agent.ts`, or
-  `arena-runtime.ts` calls `executeAcceptedTargetCycle` or
-  `getAcceptedTargetCycleReadiness`, so no runtime path can commit a cycle. The
-  primitives and the database boundary are implemented and tested; the loop is
-  not connected.
-- `executeAcceptedTargetCycle` spans three durable RPCs (register S1, register
-  S2, commit cycle) and is not atomic across them. `frozen_order_plan` is
-  immutable and unique per `(decision_id, stage)`, so a crash after a plan
-  registration commits that plan forever and recovery needs byte-identical
-  re-derivation from the same frozen inputs; changed inputs strand the decision.
-  Folding all three writes into one RPC is the follow-up that removes this.
-- Per-fill SQL S1 settlement remains unsupported by `settle_paper_fill` and still
-  fails closed with `0A000`; S1 is currently durable only inside the immutable,
-  Core-derived full-cycle artifact. That artifact now advances the shared
-  `strategy_ledger_head`, but it writes no `accounting_transaction`,
-  `position_lot_origin`, or `paper_fill_settlement` rows, so per-posting kernel
-  provenance for cycle settlements lives in the artifact bytes only and the head's
-  kernel row counters deliberately do not move.
-- Exchange-calendar/holiday adjacency and trusted official open/close auction
-  facts. Existing Alpaca SIP daily bars have explicitly different semantics.
-- Official, source-hashed Futu fee evidence and account-entitlement snapshot;
-  formulas and frozen terms exist, provenance capture is incomplete.
-- Database import of a real Futu opening portfolio; no statement/tax-lot source
-  has been provided and no substitute data is generated.
-- FX/corporate-action providers and a full decision packet containing holdings,
-  tax lots, fees, and accounting state beyond the current market-only slice.
-- Durable scheduled work queue; the first real Alpaca slice is currently a
-  one-shot Worker command (`pnpm ingest:market`).
-- Monthly provider billing reconciliation and import of provider invoice facts.
-- General contestant Bundle registry/validation and dynamic loading beyond the
-  trusted, commit-pinned host `twofold-orchestrator` Bundle.
-- Ledger-head initialization for a real pre-positioned Futu opening portfolio.
-  The deployed v1 initializer intentionally accepts only one reconciled,
-  artifact-bound, positive all-cash opening journal.
-- Process/container isolation, network/filesystem policy, resource limits, and
-  secret separation for external untrusted Bundles.
-- Controlled Lab's UZI and ai-berkshire commit-pinned instruction adapters and
-  its separate ablation reporting.
-- Authenticated production console onboarding and a durable worker deployment.
-- Vercel or other remote deployment.
+### Durable competition loop
 
-The local 3210 dogfood console is connected to real Supabase/Alpaca and now has
-real Agent, usage, cost, and accepted-target facts. Missing decisions and data
-still fail closed; the UI never substitutes demo values.
+- Postgres owns immutable Season/Round identity, decision deadlines, entrant
+  seats, leases, dependency DAG, exact retry fingerprints, accounting ledgers,
+  market evidence, valuations, and ranking.
+- A one-minute Vercel cron runs seven bounded services: Agent decisions,
+  contestant cycle work, shared market capture, corporate-action scanning,
+  corporate-action reconciliation, no-trade recovery, and next-Round
+  provisioning.
+- Shared market evidence is captured once per Round and reused by every entrant.
+  Entrant processing order cannot change a price path.
+- The v2 rulebook uses Alpaca SIP first-minute VWAP and caps whole-share fills at
+  1% of that minute's volume. Core derives the capacity and Postgres independently
+  rejects excess settlement bytes.
+- Fills remain cash-limited, FIFO, fee-aware, and tax-reserve-aware. There is no
+  margin, shorting, fabricated liquidity, or hidden minimum fill.
+- Terminal contestant-local failure is retained as evidence and may later be
+  valued only through explicit no-trade carry-forward. Failed work is never
+  relabeled as successful.
+
+### Multi-season and recovery hardening
+
+- Market capture derives symbols from the claimed Round snapshot. Corporate-
+  action scans use the union of active Season symbols and normalize Alpaca merger
+  records through the affected acquiree symbol.
+- Migration 055 provides service-only audited recovery for a failed queue item
+  only when no accepted submission, downstream work, or deadline conflict exists.
+- Migration 056 allows one immutable Bundle artifact to be reused across Seasons
+  only when the current Season entrant freezes the exact same Bundle SHA-256.
+- Earlier s1-s3 activations remain immutable evidence. s1 exposed account
+  initialization after decision time; s2 exposed cross-Season artifact
+  assumptions and the 8,192 root-output ceiling; s3 exposed the fixed 120,000
+  tree budget. s4 fixes the causes without weakening a historical fence or
+  rewriting a failed result.
+
+### Self-evolution loop
+
+- Migration 057 adds leased analysis cycles, immutable findings and experiences,
+  an audited experiment state machine, and isolated local/online-shadow trials.
+- Migration 058 makes a deterministic analysis window portable across workers:
+  the first scheduler remains provenance, while rolling deployments may request
+  the same byte-equivalent window without a false identity conflict.
+- The Arena tick now has an eighth independent `evolution` phase. Every six hours
+  it harvests agent failures, queue retries, tick reliability, model usage, and
+  data evidence without touching official portfolio state.
+- The first real production analysis retained four findings, including an
+  orchestrator terminal-failure observation of `0.75`, Vercel tick failure rate,
+  and work retry pressure. These are evidence from earlier s1-s3 failures, not
+  rewritten outcomes.
+- A real temporal replay compared s2+s3 with s4. Agent terminal failure rate
+  improved from `0.5` to `0`; estimated model cost per decision increased from
+  `$0.032217933` to `$0.03967249`, within the preregistered `$0.01` guardrail.
+  The result is `PROMOTE_CANDIDATE`, remains unpromoted, and has immutable result
+  hash `6cb253de5b143353abbeb6082880b1fa4639494a16bf0ae74b665368876d60a1`.
+- `evolution-observer-online-shadow-v1` is preregistered as `PROPOSED` with
+  ranking scope `SHADOW`; no human approval or online trial has been fabricated.
+- The Dashboard `/evolution` view exposes cycles, experience, experiment state,
+  ranking scope, human approval, and recommendations separately from the
+  official Season leaderboard.
+
+### Decision evidence and same-snapshot comparison
+
+- Migration 059 adds immutable decision-admission receipts and content-addressed
+  official-versus-candidate comparison artifacts.
+- Every future Arena submission records `guardAction`, reason codes, input age,
+  maximum market jump, stability window, maximum target delta, cooldown, and
+  the exact evidence snapshot. A blocking observation never becomes an accepted
+  target.
+- The production service role has no execute permission on the old
+  evidence-free submission RPC; it may submit only through the evidenced RPC.
+- `LOCAL_REPLAY` can now bind an official and candidate decision to one snapshot
+  and persist symbol deltas, cash delta, maximum change, and turnover before the
+  trial starts. Different snapshots fail closed in Core and Postgres.
+
+### Portfolio-policy evolution evaluation
+
+- Migration 060 binds each same-snapshot decision comparison to official and
+  candidate replay outcomes with one replay-input SHA, replay policy, and NAV
+  currency.
+- The immutable evaluation covers constraint violations, turnover, simulated
+  slippage/fees/tax, terminal NAV, maximum drawdown, and terminal failures.
+  Constraint violations and terminal failures have an absolute candidate
+  maximum of zero in addition to relative guardrails.
+- Core derives the standard evolution recommendation; Postgres independently
+  checks every metric binding and recommendation before accepting the exact
+  bytes. The Dashboard self-evolution view exposes the paired evidence.
+- `PROMOTE_CANDIDATE` is still evidence only. The runner issues no `PROMOTE`
+  transition and the database retains its existing named-human gate.
+
+## Verification
+
+- 110 Core, Worker, and Dashboard test files pass: 514 tests.
+- Core, DSH Bundle, Worker, and Dashboard production TypeScript builds pass.
+- The clean Vercel production build passes package builds, Next.js compile,
+  typecheck, page generation, output tracing, and deployment.
+- Relevant remote pgTAP contracts pass, including Round readiness, v2 market
+  evidence, v2 stage registration, failed-work recovery, and cross-Season Bundle
+  reuse.
+- The production start gate returned `ready: true` with 100 members, 2 accepted
+  decisions, 2 frozen S1 plans, all 4 pre-S1 tasks successful, and no alerts.
+- ego-lite verified the authenticated desktop and 390px mobile Season views, both
+  real decision pages, the orchestrator descendant tree, accepted allocations,
+  and the production `/evolution` P1 evidence section with zero document-level
+  horizontal overflow.
+- Migrations through 060 are aligned locally and remotely; the 63-test Arena
+  decision/evolution contract passes against production Supabase.
+- Current production deployment is `dpl_HrpdfYZSTspA1ZAmVBdXkjziKxJ8` and owns
+  `https://twofold-lab-neon.vercel.app`.
+- The post-deploy production cron invocation returned HTTP 200.
+
+## Remaining operations
+
+1. Observe the real S1 open reference, S1 settlement/S2 plan, S2 execution, and
+   final Liquidation-NAV ranking on 2026-08-31 and 2026-09-01.
+2. Obtain an explicit named-human decision before scheduling the proposed
+   `ONLINE_SHADOW` experiment for Round 2; rejection remains a valid result.
+3. Connect database-derived critical health alerts to an external paging
+   destination.
+4. Add process/container isolation before accepting untrusted external Bundles.
+
+The exact startup, deadline, recovery, and readiness procedure is in
+[arena-runbook.md](arena-runbook.md).

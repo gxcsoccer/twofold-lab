@@ -20,7 +20,6 @@ async function main(): Promise<void> {
   const delivery = await fetchAlpacaDailyBars(market, {
     ...(endAt === undefined ? {} : { endAt }),
     ...(targetSessionDate === undefined ? {} : { targetSessionDate }),
-    signal: AbortSignal.timeout(20_000),
   });
   const repository = new SupabaseMarketDataRepository(
     worker.supabaseUrl!,

@@ -2,6 +2,7 @@ export interface WorkerConfig {
   readonly workerId: string;
   readonly pollIntervalMs: number;
   readonly leaseSeconds: number;
+  readonly agentLeaseSeconds: number;
   readonly supabaseUrl?: string;
   readonly supabaseSecretKey?: string;
 }
@@ -15,12 +16,26 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
   return parsed;
 }
 
+function boundedLease(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+  maximum: number,
+): number {
+  const parsed = positiveInteger(value, fallback, name);
+  if (parsed < 5 || parsed > maximum) {
+    throw new Error(`${name} must be between 5 and ${maximum} seconds`);
+  }
+  return parsed;
+}
+
 export function loadWorkerConfig(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): WorkerConfig {
   const supabaseUrl = environment.SUPABASE_URL;
   const supabaseSecretKey = environment.SUPABASE_SECRET_KEY;
   const hasSupabase = Boolean(supabaseUrl && supabaseSecretKey);
+  const maximumLeaseSeconds = environment.VERCEL === "1" ? 780 : 3_600;
 
   if ((supabaseUrl === undefined) !== (supabaseSecretKey === undefined)) {
     throw new Error("SUPABASE_URL and SUPABASE_SECRET_KEY must be provided together");
@@ -36,10 +51,17 @@ export function loadWorkerConfig(
       5_000,
       "TWOFOLD_POLL_INTERVAL_MS",
     ),
-    leaseSeconds: positiveInteger(
+    leaseSeconds: boundedLease(
       environment.TWOFOLD_LEASE_SECONDS,
       60,
       "TWOFOLD_LEASE_SECONDS",
+      maximumLeaseSeconds,
+    ),
+    agentLeaseSeconds: boundedLease(
+      environment.TWOFOLD_AGENT_LEASE_SECONDS,
+      environment.VERCEL === "1" ? 780 : 1_800,
+      "TWOFOLD_AGENT_LEASE_SECONDS",
+      maximumLeaseSeconds,
     ),
     ...(supabaseUrl === undefined ? {} : { supabaseUrl }),
     ...(supabaseSecretKey === undefined ? {} : { supabaseSecretKey }),

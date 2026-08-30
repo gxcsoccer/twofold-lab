@@ -15,8 +15,10 @@ import {
   validateArenaDecisionProjection,
   validateArenaDecisionProjectionEvidence,
 } from "@/lib/data/arena-decision";
+import { validateAcceptedTargetSubmission } from "@/lib/data/accepted-target-submission";
 import { validateAcceptedTargetCycleProjection } from "@/lib/data/accepted-target-cycle";
 import { validateAcceptedTargetCycleReadiness } from "@/lib/data/accepted-target-cycle-readiness";
+import { validatePrivateArenaOverview } from "@/lib/data/private-arena-overview";
 
 interface ProjectionRow<T> {
   state: T;
@@ -104,7 +106,6 @@ interface MarketBarFactRow {
 }
 
 const PROJECTIONS = {
-  seasonOverview: "dashboard.season_overview",
   runDetail: "dashboard.run_detail",
   audit: "dashboard.audit",
   settings: "dashboard.settings",
@@ -204,9 +205,29 @@ export class SupabaseDashboardRepository implements DashboardRepository {
   }
 
   async getSeasonOverview(): Promise<SeasonOverviewData> {
-    return markProjectionReady(
-      await this.readLatestProjection<SeasonOverviewData>(PROJECTIONS.seasonOverview),
-    );
+    const result = await this.client.rpc("get_private_arena_overview");
+    if (result.error) {
+      throw new ProjectionReadError("private_arena_overview", result.error.code);
+    }
+    const overview = validatePrivateArenaOverview(result.data);
+    if (!overview.ok) {
+      throw new ProjectionContractError(
+        "private_arena_overview",
+        [...overview.issues],
+      );
+    }
+    return {
+      setupRequired: false,
+      connection: {
+        configured: true,
+        source: "supabase",
+        readStatus: "READY",
+        label: "私有竞技场已连接",
+        detail: "赛季、赛程、工作队列和排名来自同一个数据库快照。",
+      },
+      checklist: [],
+      overview: overview.value,
+    };
   }
 
   async getRunDetail(runId: string): Promise<RunDetailData> {
@@ -254,6 +275,39 @@ export class SupabaseDashboardRepository implements DashboardRepository {
       throw new ProjectionContractError(projectionKey, issues);
     }
 
+    const acceptedSubmissionId = stateResult.value.submission.acceptedSubmissionId;
+    const submissionKey = `accepted_target_submission/${decisionId}`;
+    const submissionResult = await this.client
+      .from("accepted_target_submission")
+      .select(
+        "submission_id,decision_id,targets,cash_weight_bps,decision_summary,submission_sha256,accepted_at",
+      )
+      .eq("decision_id", decisionId)
+      .maybeSingle();
+    if (submissionResult.error) {
+      throw new ProjectionReadError(submissionKey, submissionResult.error.code);
+    }
+    if (acceptedSubmissionId === null && submissionResult.data !== null) {
+      throw new ProjectionContractError(submissionKey, [
+        "decision 投影尚未接受提交，但 accepted_target_submission 已存在",
+      ]);
+    }
+    if (acceptedSubmissionId !== null && submissionResult.data === null) {
+      throw new ProjectionContractError(submissionKey, [
+        "decision 投影引用的 accepted_target_submission 不存在",
+      ]);
+    }
+    const acceptedSubmission = acceptedSubmissionId === null
+      ? null
+      : validateAcceptedTargetSubmission(
+          submissionResult.data,
+          decisionId,
+          acceptedSubmissionId,
+        );
+    if (acceptedSubmission !== null && !acceptedSubmission.ok) {
+      throw new ProjectionContractError(submissionKey, acceptedSubmission.issues);
+    }
+
     const cycleProjectionKey = `dashboard.accepted_target_cycle/${decisionId}`;
     const cycleResult = await this.client
       .from("projection")
@@ -291,7 +345,6 @@ export class SupabaseDashboardRepository implements DashboardRepository {
       throw new ProjectionContractError(readinessKey, executionReadiness.issues);
     }
     const readinessIssues: string[] = [];
-    const acceptedSubmissionId = stateResult.value.submission.acceptedSubmissionId;
     if (
       acceptedSubmissionId !== null
       && executionReadiness.value.acceptedSubmissionId !== null
@@ -320,6 +373,7 @@ export class SupabaseDashboardRepository implements DashboardRepository {
       status: "READY",
       projection: stateResult.value,
       evidence: evidenceResult.value,
+      acceptedSubmission: acceptedSubmission?.value ?? null,
       executionCycle: executionCycle?.value ?? null,
       executionReadiness: executionReadiness.value,
       issues: [],
