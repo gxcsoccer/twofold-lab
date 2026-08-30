@@ -79,14 +79,141 @@ export interface ActivityItem {
   tone: StatusTone;
 }
 
+export type PrivateArenaSeasonStatus = "UPCOMING" | "RUNNING" | "COMPLETE";
+
+export type PrivateArenaRoundStage =
+  | "SCHEDULED"
+  | "DECISION_WINDOW"
+  | "WAITING_S1_OPEN"
+  | "S1_EXECUTION"
+  | "SETTLING_S1"
+  | "S2_EXECUTION"
+  | "FINALIZING"
+  | "COMPLETE";
+
+export type PrivateArenaWorkPhase =
+  | "RUN_AGENT_DECISION"
+  | "PREPARE_S1_ORDERS"
+  | "CAPTURE_S1_OPEN_REFERENCE"
+  | "CAPTURE_S1_CLOSE"
+  | "SETTLE_S1_AND_PREPARE_S2"
+  | "CAPTURE_S2_OPEN_REFERENCE"
+  | "CAPTURE_S2_CLOSE"
+  | "FINALIZE_ACCEPTED_TARGET_CYCLE";
+
+export type PrivateArenaWorkStatus =
+  | "REQUESTED"
+  | "CLAIMED"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "CANCELED";
+
+export interface PrivateArenaWorkOverview {
+  schema: "twofold.private_arena_work_overview/v1";
+  phase: PrivateArenaWorkPhase;
+  status: PrivateArenaWorkStatus;
+  scheduledAt: string;
+  deadlineAt: string | null;
+  attemptCount: string;
+  errorCode: string | null;
+}
+
+export interface PrivateArenaScore {
+  schema: "twofold.private_arena_score/v1";
+  stage: "OPENING" | "S1_CLOSE" | "S2_CLOSE";
+  roundIndex: string;
+  valuationAt: string;
+  brokerNav: string;
+  taxReservedNav: string;
+  liquidationNav: string;
+  scoreBaseLiquidationNav: string;
+  returnMultiple: string;
+  valuationSha256: string;
+}
+
+export type PrivateArenaNoTradeReason =
+  | "DECISION_UNAVAILABLE"
+  | "S1_PLAN_UNAVAILABLE"
+  | "S1_CHECKPOINT_UNAVAILABLE"
+  | "FINALIZATION_UNAVAILABLE";
+
+export interface PrivateArenaNoTradeOverview {
+  schema: "twofold.private_arena_no_trade_overview/v1";
+  status: "REQUESTED" | "CLAIMED" | "SUCCEEDED" | "FAILED";
+  reasonCode: PrivateArenaNoTradeReason;
+  sourcePhase:
+    | "RUN_AGENT_DECISION"
+    | "PREPARE_S1_ORDERS"
+    | "SETTLE_S1_AND_PREPARE_S2"
+    | "FINALIZE_ACCEPTED_TARGET_CYCLE";
+  scheduledAt: string;
+  completedAt: string | null;
+  valuationId: string | null;
+  outcome: "NO_TRADE_CARRY_FORWARD" | "EXISTING_S2_VALUATION" | null;
+}
+
+export interface PrivateArenaEntrantOverview {
+  schema: "twofold.private_arena_entrant_overview/v2";
+  rank: string | null;
+  entrantId: string;
+  entrantCode: string;
+  runId: string;
+  bundleId: string;
+  presetId: string;
+  provider: string;
+  model: string;
+  executionClass: "ROOT_ONLY" | "ORCHESTRATED";
+  roundEntryId: string | null;
+  decisionId: string | null;
+  noTrade: PrivateArenaNoTradeOverview | null;
+  valuation: PrivateArenaScore | null;
+  work: PrivateArenaWorkOverview[];
+}
+
+export interface PrivateArenaOverview {
+  schema: "twofold.private_arena_overview/v2";
+  asOf: string;
+  season: {
+    schema: "twofold.private_arena_season_overview/v1";
+    seasonId: string;
+    seasonCode: string;
+    displayName: string;
+    opensAt: string;
+    closesAt: string;
+    status: PrivateArenaSeasonStatus;
+    decisionCadence: "US_EQUITY_DAILY_AFTER_CLOSE";
+    marketTimezone: "America/New_York";
+    openingHolding: string;
+    openingCash: string;
+    entrantCount: string;
+    roundCount: string;
+  };
+  currentRound: {
+    schema: "twofold.private_arena_round_overview/v1";
+    roundId: string;
+    roundIndex: string;
+    stage: PrivateArenaRoundStage;
+    entryCount: string;
+    finalCount: string;
+    decisionSessionDate: string;
+    decisionWindowOpensAt: string;
+    decisionWindowClosesAt: string;
+    s1SessionDate: string;
+    s1OpenAt: string;
+    s1CloseAt: string;
+    s2SessionDate: string;
+    s2OpenAt: string;
+    s2CloseAt: string;
+    cycleReadyAt: string;
+  } | null;
+  entrants: PrivateArenaEntrantOverview[];
+}
+
 export interface SeasonOverviewData {
   setupRequired: boolean;
   connection: ConnectionSummary;
   checklist: SetupItem[];
-  season: SeasonSummary | null;
-  runs: RunSummary[];
-  modelUsage: ModelUsageSummary | null;
-  activity: ActivityItem[];
+  overview: PrivateArenaOverview | null;
 }
 
 export interface Holding {
@@ -346,6 +473,20 @@ export interface ArenaDecisionProjectionEvidence {
   projectionUpdatedAt: string;
 }
 
+export interface AcceptedTargetSubmission {
+  submissionId: string;
+  decisionId: string;
+  targets: ReadonlyArray<{
+    symbol: string;
+    targetWeightBps: string;
+    rationale: string;
+  }>;
+  cashWeightBps: string;
+  decisionSummary: string;
+  submissionSha256: string;
+  acceptedAt: string;
+}
+
 export interface AcceptedTargetCycleProjection {
   schema: "twofold.dashboard.accepted_target_cycle/v1";
   status: "COMPLETED";
@@ -404,6 +545,7 @@ export interface ArenaDecisionPageData {
   status: "UNCONFIGURED" | "NOT_READY" | "READY" | "ERROR";
   projection: ArenaDecisionProjection | null;
   evidence: ArenaDecisionProjectionEvidence | null;
+  acceptedSubmission: AcceptedTargetSubmission | null;
   executionCycle: AcceptedTargetCycleProjection | null;
   executionReadiness: AcceptedTargetCycleReadiness | null;
   issues: string[];

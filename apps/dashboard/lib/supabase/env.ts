@@ -39,9 +39,12 @@ export function readServerSupabaseConfig(): ServerSupabaseConfig | null {
     ?? publicConfig?.url
     ?? ""
   ).trim();
+  const privateLabEnabled =
+    process.env.TWOFOLD_PRIVATE_LAB?.trim().toLowerCase() === "true";
   const localDogfoodEnabled = process.env.NODE_ENV !== "production"
     && process.env.TWOFOLD_LOCAL_DOGFOOD?.trim().toLowerCase() === "true";
-  const secretKey = localDogfoodEnabled
+  const serverSecretEnabled = privateLabEnabled || localDogfoodEnabled;
+  const secretKey = serverSecretEnabled
     ? (
         process.env.SUPABASE_SECRET_KEY
         ?? process.env.SUPABASE_SERVICE_ROLE_KEY

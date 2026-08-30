@@ -1534,6 +1534,75 @@ tbody tr:hover td {
   margin-top: 20px;
 }
 
+.accepted-target-summary-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.accepted-target-summary-metrics span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+  padding: 5px 9px;
+}
+
+.accepted-target-decision-summary {
+  max-width: 980px;
+  margin: 0 0 18px;
+  color: var(--muted-strong);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.accepted-target-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.accepted-target-list li {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-muted);
+  padding: 12px 14px;
+}
+
+.accepted-target-list li > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.accepted-target-list strong {
+  font-size: 0.83rem;
+}
+
+.accepted-target-list li > div span {
+  color: var(--green-strong);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.accepted-target-list p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.accepted-target-evidence {
+  margin-top: 18px;
+}
+
 @media (max-width: 1180px) {
   .metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1734,6 +1803,10 @@ tbody tr:hover td {
 
   .agent-node-metrics,
   .agent-node-evidence {
+    grid-template-columns: 1fr;
+  }
+
+  .accepted-target-list {
     grid-template-columns: 1fr;
   }
 

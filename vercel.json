@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @twofold/core build && pnpm --filter @twofold-lab/dsh-twofold build && pnpm --filter @twofold/worker build && pnpm --filter @twofold-lab/dashboard build",
+  "outputDirectory": "apps/dashboard/.next",
+  "crons": [
+    {
+      "path": "/api/arena/tick",
+      "schedule": "* * * * *"
+    }
+  ]
+}
