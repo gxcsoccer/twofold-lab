@@ -119,40 +119,104 @@ Tax-reserved / Liquidation NAV. The result is byte-stable and content-addressed;
 array order inside the hashed artifact is compared by code point so the content
 address cannot depend on the host's ICU collation.
 
-Tested Worker primitives can register both frozen plans and commit that exact
-cycle through one idempotent Supabase boundary. Postgres validates identity,
-hashes, the plan bytes against the admitted frozen plans, stage/order
-conservation, ledger/NAV invariants, run-stream CAS, and the strategy ledger head
-before atomically publishing the immutable artifact, business event, and decision
-projection. The head is locked, required to match the artifact's opening head,
-advanced exactly once per settlement, and moved to the artifact's final head in
-the same transaction, so two decisions in one run cannot derive from the same
-balances.
+The private Arena Worker now owns the real-time DAG from Agent decision through
+S1 order freeze, shared first-minute open reference, S1 close and tax-FX
+settlement, S2 order freeze, S2 open/close evidence, atomic final cycle commit,
+Liquidation NAV, and ranking. Each phase is durable, leased, prerequisite-gated,
+deadline-aware, idempotent, and scheduled from the frozen exchange calendar.
+Work completed after a frozen deadline is recorded as failure and can never
+retroactively publish a simulated fill. Completion responses have an exact
+database fingerprint, so transport retries cannot duplicate or alter a phase.
+After every entrant reaches the shared S2 close, the Worker also provisions the
+next non-overlapping Round from that exact close snapshot. It freezes a new
+content-addressed Alpaca calendar, skips any already-missed decision cutoff, and
+creates the Round, entrant seats, and full work DAG in one database transaction.
+If one entrant's local Agent or settlement phase terminates, a separate recovery
+queue preserves its ledger byte-for-byte, values the unchanged portfolio at the
+same shared S2 close, publishes an explicit no-trade result beside its rank, and
+allows the other entrants and next Round to continue. It never converts failed
+work into a synthetic successful target, order, fill, or settlement.
 
-These primitives are not wired into the dogfood runtime: nothing in the worker or
-scheduler calls them, so no live path can commit a cycle yet.
+Postgres validates exact identities and bytes, plan/order conservation,
+ledger/NAV invariants, market-evidence bindings, run-stream CAS, and the strategy
+ledger head. Final cycle publication and the S2-close ranking valuation commit in
+one database transaction. Realized tax remains a conservative CNY accounting
+reserve rather than a filed tax figure.
 
-The remote database now exposes one atomic settlement boundary for simulated
-S2 USD BUY orders. Under a per-account ledger-head lock it re-derives current
-cash, applies the lower of current and frozen buying power, derives the largest
-affordable integer fill and frozen Futu fees, and commits the journal, lot,
-acquisition CNY FX binding, outcome, and next hash-chain head in one transaction.
-Zero-affordable orders become auditable cancellations without a fake fill.
+The private Arena can host multiple immutable Seasons. The original
+three-symbol Season and an early failed Liquid 100 activation are retained as
+audit evidence. The current Liquid 100 config freezes a real 100-stock US
+liquid universe while preserving the same equal start: every entrant receives
+an independent ledger with exactly `150 LULU` and zero cash.
+Its decision packet carries the same 100-symbol close plus frozen 5/20/60-day
+returns and 20-session median dollar volume. Submissions must hold 5–10 stocks,
+cap each position at 20%, and retain at least 5% cash.
 
-The generic cycle handoff exists as tested primitives plus a deployed database
-boundary; it is not connected to the live dogfood scheduler, which also cannot
-authorize a real cycle yet: pre-positioned opening-account import, trusted
-official-auction/FX ingestion, exchange calendars, and a real Futu statement
-remain required. The handoff also spans three durable RPCs and is not atomic
-across them, so a crash between plan registration and cycle commit leaves an
-immutable plan that only a byte-identical re-derivation can follow. The older
-per-fill database RPC still supports only atomic S2 BUY; S1 is committed as part
-of the Core-derived replay artifact, not misrepresented as a per-fill SQL
-settlement. Realized tax is an accounting balance in CNY only — the
-trading-currency reserve shown as a NAV deduction is converted at each
-disposition's own rate and is a conservative reserve, not a filed tax figure.
-Alpaca daily bars are never admitted as official execution-price evidence, and no
-test cycle is retained.
+The Liquid 100 Season selects the v2 execution rulebook. It prices
+against the shared Alpaca SIP first-minute VWAP and limits each integer fill to
+the configured fraction of that minute's whole-share volume. Core derives the
+partial fill and Postgres independently enforces the same capacity. The active
+three-symbol Season remains immutable on v1.
+
+To rebuild a future frozen pool from the four authoritative source feeds:
+
+```bash
+pnpm universe:liquid100 -- \
+  --session-date=YYYY-MM-DD \
+  --persist-snapshot \
+  --season-config=config/private-us-liquid-100-s1.json
+```
+
+The generated artifact is content-addressed; registration refuses any config
+whose inline universe differs from those exact bytes.
+
+To activate a new Season from an existing frozen artifact and matching sealed
+snapshot, prepare a future opening boundary first:
+
+```bash
+pnpm season:prepare:liquid100 -- \
+  --artifact=config/universes/us-liquid-100-YYYY-MM-DD.json \
+  --snapshot-id=<sealed-snapshot-uuid> \
+  --season-code=private-us-liquid-100-s2 \
+  --display-name="Private US Liquid 100 S2" \
+  --output=config/private-us-liquid-100-s2.json \
+  --activation-delay-minutes=15
+```
+
+Register the Season and initialize both accounts before registering its Round.
+The preparation step rejects a snapshot whose session or exact 100-symbol set
+differs from the artifact; it also gives deployment a bounded pre-open buffer.
+
+The rollback-only release rehearsal is one command:
+
+```bash
+pnpm test:v2-season-rehearsal
+```
+
+Before S1, prove both immutable Round completeness and current Worker health:
+
+```bash
+TWOFOLD_WORKER_ID=twofold-vercel-arena pnpm round:readiness -- --round=1
+```
+
+The command is read-only and exits nonzero unless the configured Round has all
+entrants, equal genesis-bound accounts, the exact eight-phase work DAG,
+accepted decisions and frozen S1 plans, while the intended production Worker is
+live on the same active Season with no operational alerts. It also rejects an
+entrant fan-out that cannot drain on the frozen one-minute cadence with
+dependency and retry reserve before every deadline.
+
+To run the persistent competition loop, the Worker credential layer still needs
+`DEEPSEEK_API_KEY` and the Worker process must remain running:
+
+```bash
+pnpm dev:arena-worker
+```
+
+Without that credential, Agent decision work remains visibly queued and no
+fallback strategy is fabricated. `pnpm arena:tick` runs one observable lease
+cycle; `pnpm dev:arena-worker` keeps all Agent, market, settlement, and Season
+provisioning runners alive.
 
 For the gated browser contract fixture (development only):
 
@@ -189,3 +253,5 @@ Token/cost plan, and [docs/implementation-plan.md](docs/implementation-plan.md)
 for staged delivery.
 The exact implemented/not-yet-implemented boundary is tracked in
 [docs/status.md](docs/status.md).
+Start, restart, and missed-deadline operations are documented in
+[docs/arena-runbook.md](docs/arena-runbook.md).
