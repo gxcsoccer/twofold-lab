@@ -217,7 +217,7 @@ select is(
     )
   ).instrument_id,
   '71000000-0000-4000-8000-000000000001'::uuid,
-  'register_instrument establishes a stable LULU identity'
+  'register_instrument establishes a stable contract-only identity'
 );
 
 select is(
@@ -225,7 +225,7 @@ select is(
     public.register_instrument_symbol_version(
       'accounting-contract:symbol:lulu',
       '71000000-0000-4000-8000-000000000001',
-      'LULU',
+      'TFLULU',
       'NASDAQ',
       '2026-01-01',
       null,
@@ -233,7 +233,7 @@ select is(
       'accounting-contract'
     )
   ).symbol,
-  'LULU',
+  'TFLULU',
   'a ticker is stored as an effective-dated alias of the stable instrument'
 );
 
@@ -252,7 +252,7 @@ select throws_ok(
     select public.register_instrument_symbol_version(
       'accounting-contract:symbol:lulu:overlap',
       '71000000-0000-4000-8000-000000000001',
-      'LULU2',
+      'TFLULU2',
       'NASDAQ',
       '2026-08-24',
       null,
@@ -377,7 +377,7 @@ insert into public.market_snapshot (
   (select decision_at from accounting_order_plan_context),
   ((select decision_at from accounting_order_plan_context)
     at time zone 'UTC')::date,
-  array['LULU'],
+  array['TFLULU'],
   'accounting-order-plan-contract-v1',
   'twofold.market_snapshot/v2',
   repeat('8', 64)
@@ -557,7 +557,7 @@ insert into public.accepted_target_submission (
   'accounting-contract-order-plan-root',
   '72000000-0000-4000-8000-000000000012',
   repeat('9', 64),
-  '[{"symbol":"LULU","target_weight_bps":"10000"}]'::jsonb,
+  '[{"symbol":"TFLULU","target_weight_bps":"10000"}]'::jsonb,
   '0',
   'Accounting order plan fixture',
   repeat('b', 64),
@@ -680,7 +680,7 @@ begin
     'stage', p_stage,
     'side', p_side,
     'instrumentId', '71000000-0000-4000-8000-000000000001',
-    'symbol', 'LULU',
+    'symbol', 'TFLULU',
     'quantity', p_quantity,
     'referencePrice', '100',
     'referencePriceEvidence', v_reference_evidence,
@@ -1683,7 +1683,7 @@ insert into public.accepted_target_submission (
   'accounting-contract-past-retry-root',
   '72000000-0000-4000-8000-000000000112',
   repeat('c', 64),
-  '[{"symbol":"LULU","target_weight_bps":"10000"}]'::jsonb,
+  '[{"symbol":"TFLULU","target_weight_bps":"10000"}]'::jsonb,
   '0',
   'Past-cutoff exact retry fixture',
   repeat('d', 64),
@@ -2122,7 +2122,7 @@ select is(
       '2026-08-21T14:30:00Z',
       '2026-08-21',
       '2026-08-22',
-      'Buy LULU and recognize its broker fee',
+      'Buy TFLULU and recognize its broker fee',
       pg_temp.contract_buy_postings(),
       '{"provider":"contract-fixture"}'::jsonb,
       'accounting-contract'
@@ -2201,7 +2201,7 @@ select is(
       '2026-08-21T14:30:00Z',
       '2026-08-21',
       '2026-08-22',
-      'Buy LULU and recognize its broker fee',
+      'Buy TFLULU and recognize its broker fee',
       pg_temp.contract_buy_postings(),
       '{"provider":"contract-fixture"}'::jsonb,
       'accounting-contract'
@@ -2229,7 +2229,7 @@ select is(
       '2026-08-21T14:30:00Z',
       '2026-08-21',
       '2026-08-22',
-      'Buy LULU and recognize its broker fee',
+      'Buy TFLULU and recognize its broker fee',
       pg_temp.contract_buy_postings(),
       '{"provider":"contract-fixture"}'::jsonb,
       'accounting-contract'

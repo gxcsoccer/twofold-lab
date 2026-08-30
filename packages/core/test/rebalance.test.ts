@@ -425,6 +425,88 @@ describe("two-stage deterministic rebalance", () => {
     })).toThrow("already has a persisted FIFO lot");
   });
 
+  it("freezes and enforces a first-minute participation cap independently of cash", () => {
+    const plan = createS2BuyOrderPlan({
+      decisionId,
+      ...s2PlanContext,
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+      preOrderTaxReservedNav: "1000",
+      buyingPowerEvidence: planningBuyingPowerEvidence("1002.29"),
+      positions: [{
+        instrumentId: "lulu",
+        symbol: "LULU",
+        quantity: "0",
+        mark: closeMark("100", "lulu", S1_DATE, S1_CLOSE_VISIBLE_AT),
+      }],
+      targets: [{ instrumentId: "lulu", symbol: "LULU", weightBps: "10000" }],
+      cashWeightBps: "0",
+    });
+
+    expect(plan).toMatchObject({
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+    });
+    expect(() => assertFrozenOrderPlanIntegrity({
+      ...plan,
+      maxParticipationBps: "101",
+    })).toThrow("fingerprint mismatch");
+
+    const result = executeS2BuyOrders({
+      plan,
+      tradeDate: S2_DATE,
+      executedAt: "2026-08-26T13:31:00.000Z",
+      officialOpenPrices: {
+        lulu: {
+          ...openPrice("100", "lulu", S2_DATE, S2_OPEN_VISIBLE_AT),
+          observedVolume: "500",
+        },
+      },
+      existingLots: [],
+    });
+
+    expect(result.fills[0]).toMatchObject({
+      orderQuantity: "10",
+      fillQuantity: "5",
+      canceledQuantity: "5",
+      status: "PARTIALLY_FILLED_LIQUIDITY_LIMIT",
+      liquidity: {
+        observedVolume: "500",
+        maxParticipationBps: "100",
+        maximumFillQuantity: "5",
+      },
+    });
+  });
+
+  it("fails closed when a participation-capped execution lacks volume", () => {
+    const plan = createS2BuyOrderPlan({
+      decisionId,
+      ...s2PlanContext,
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION",
+      maxParticipationBps: "100",
+      preOrderTaxReservedNav: "100",
+      buyingPowerEvidence: planningBuyingPowerEvidence("100"),
+      positions: [{
+        instrumentId: "lulu",
+        symbol: "LULU",
+        quantity: "0",
+        mark: closeMark("10", "lulu", S1_DATE, S1_CLOSE_VISIBLE_AT),
+      }],
+      targets: [{ instrumentId: "lulu", symbol: "LULU", weightBps: "10000" }],
+      cashWeightBps: "0",
+    });
+
+    expect(() => executeS2BuyOrders({
+      plan,
+      tradeDate: S2_DATE,
+      executedAt: "2026-08-26T13:31:00.000Z",
+      officialOpenPrices: {
+        lulu: openPrice("10", "lulu", S2_DATE, S2_OPEN_VISIBLE_AT),
+      },
+      existingLots: [],
+    })).toThrow("observedVolume");
+  });
+
   it("fails closed when a required S2 price is absent", () => {
     const plan = createS2BuyOrderPlan({
       decisionId,

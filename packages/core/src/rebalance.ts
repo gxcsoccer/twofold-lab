@@ -18,6 +18,10 @@ import {
   type DecimalInput,
 } from "./fixed-decimal.js";
 import {
+  calculateVolumeParticipationLimit,
+  type VolumeParticipationLimit,
+} from "./execution-liquidity.js";
+import {
   compareSequences,
   decimal,
   nextSequence,
@@ -49,6 +53,8 @@ export interface MarketPriceEvidence {
   readonly visibleAt: string;
   readonly snapshotId: string;
   readonly factId: string;
+  /** Whole-share volume from the same immutable minute fact, when available. */
+  readonly observedVolume?: string;
 }
 
 export interface FrozenMarketPriceEvidence {
@@ -58,6 +64,7 @@ export interface FrozenMarketPriceEvidence {
   readonly visibleAt: string;
   readonly snapshotId: string;
   readonly factId: string;
+  readonly observedVolume?: string;
 }
 
 export interface BuyingPowerEvidence {
@@ -72,7 +79,10 @@ export interface FrozenBuyingPowerEvidence {
   readonly visibleAt: string;
 }
 
-export type OrderExecutionModel = "SIMULATED_SLIPPAGE" | "BROKER_ACTUAL";
+export type OrderExecutionModel =
+  | "SIMULATED_SLIPPAGE"
+  | "SIMULATED_MINUTE_PARTICIPATION"
+  | "BROKER_ACTUAL";
 
 export interface MarkedPosition {
   readonly instrumentId: string;
@@ -132,6 +142,7 @@ export interface SellOrderPlan {
   readonly executionModel: OrderExecutionModel;
   readonly slippageBps: string;
   readonly fillPriceScale: string;
+  readonly maxParticipationBps?: string;
   readonly taxRulesetId: typeof STRICT_SHADOW_TAX_RULESET_ID;
   readonly taxAllocationScale: string;
   readonly orders: readonly FrozenSellOrder[];
@@ -145,6 +156,7 @@ export interface BuyOrderPlan {
   readonly executionModel: OrderExecutionModel;
   readonly slippageBps: string;
   readonly fillPriceScale: string;
+  readonly maxParticipationBps?: string;
   readonly buyingPowerEvidence: FrozenBuyingPowerEvidence;
   readonly orders: readonly FrozenBuyOrder[];
   readonly planFingerprint: string;
@@ -177,7 +189,13 @@ export interface ExecutedBuyOrder {
   readonly feeCurrency: string;
   /** One filled buy order creates exactly one immutable FIFO-origin lot. */
   readonly createdLot: ShadowTaxLot | null;
-  readonly status: "FILLED" | "PARTIALLY_FILLED_CASH_LIMIT" | "CANCELED_CASH_LIMIT";
+  readonly liquidity: VolumeParticipationLimit | null;
+  readonly status:
+    | "FILLED"
+    | "PARTIALLY_FILLED_CASH_LIMIT"
+    | "CANCELED_CASH_LIMIT"
+    | "PARTIALLY_FILLED_LIQUIDITY_LIMIT"
+    | "CANCELED_LIQUIDITY_LIMIT";
 }
 
 export interface BuyExecutionResult {
@@ -322,6 +340,14 @@ function validatePriceEvidence(
     visibleAt: evidence.visibleAt,
     snapshotId: evidence.snapshotId,
     factId: evidence.factId,
+    ...(evidence.observedVolume === undefined
+      ? {}
+      : {
+          observedVolume: requireInteger(
+            evidence.observedVolume,
+            `${field}.observedVolume`,
+          ).toString(),
+        }),
   });
 }
 
@@ -356,6 +382,7 @@ function validatePlanRules(
   }
   if (
     plan.executionModel !== "SIMULATED_SLIPPAGE"
+    && plan.executionModel !== "SIMULATED_MINUTE_PARTICIPATION"
     && plan.executionModel !== "BROKER_ACTUAL"
   ) {
     throw new TypeError("Unsupported execution model");
@@ -367,6 +394,10 @@ function validatePlanRules(
   if (plan.executionModel === "BROKER_ACTUAL" && slippageBps !== 0n) {
     throw new RangeError("BROKER_ACTUAL plans must freeze slippageBps at 0");
   }
+  validateParticipationPolicy(
+    plan.executionModel,
+    plan.maxParticipationBps,
+  );
   const fillPriceScale = requireInteger(
     plan.fillPriceScale,
     "plan.fillPriceScale",
@@ -563,6 +594,7 @@ export function createS1SellOrderPlan(input: {
   readonly cashWeightBps: string;
   readonly slippageBps: string;
   readonly executionModel?: OrderExecutionModel;
+  readonly maxParticipationBps?: string;
   readonly fillPriceScale: number;
   readonly taxAllocationScale: number;
   readonly feeSchedules?: readonly FutuFeeSchedule[];
@@ -576,6 +608,10 @@ export function createS1SellOrderPlan(input: {
   if (executionModel === "BROKER_ACTUAL" && slippageBps !== "0") {
     throw new RangeError("BROKER_ACTUAL plans must freeze slippageBps at 0");
   }
+  const participation = validateParticipationPolicy(
+    executionModel,
+    input.maxParticipationBps,
+  );
   const fillPriceScale = requireScale(input.fillPriceScale, "fillPriceScale");
   const taxAllocationScale = requireScale(
     input.taxAllocationScale,
@@ -647,6 +683,9 @@ export function createS1SellOrderPlan(input: {
     executionModel,
     slippageBps,
     fillPriceScale,
+    ...(participation === undefined
+      ? {}
+      : { maxParticipationBps: participation }),
     taxRulesetId: STRICT_SHADOW_TAX_RULESET_ID,
     taxAllocationScale,
     orders: frozenOrders,
@@ -673,6 +712,7 @@ export function createS2BuyOrderPlan(input: {
   readonly cashWeightBps: string;
   readonly slippageBps: string;
   readonly executionModel?: OrderExecutionModel;
+  readonly maxParticipationBps?: string;
   readonly fillPriceScale: number;
   readonly feeSchedules?: readonly FutuFeeSchedule[];
 }): BuyOrderPlan {
@@ -685,6 +725,10 @@ export function createS2BuyOrderPlan(input: {
   if (executionModel === "BROKER_ACTUAL" && slippageBps !== "0") {
     throw new RangeError("BROKER_ACTUAL plans must freeze slippageBps at 0");
   }
+  const participation = validateParticipationPolicy(
+    executionModel,
+    input.maxParticipationBps,
+  );
   const fillPriceScale = requireScale(input.fillPriceScale, "fillPriceScale");
   validatePlanningWindow(
     input.s1SessionDate,
@@ -801,6 +845,9 @@ export function createS2BuyOrderPlan(input: {
     executionModel,
     slippageBps,
     fillPriceScale,
+    ...(participation === undefined
+      ? {}
+      : { maxParticipationBps: participation }),
     buyingPowerEvidence,
     orders: frozenOrders,
     initialBuyingPower,
@@ -1064,8 +1111,11 @@ export function executeS2BuyOrders(input: {
 }): BuyExecutionResult {
   const plan = input.plan;
   assertFrozenOrderPlanIntegrity(plan, "S2");
-  if (plan.executionModel !== "SIMULATED_SLIPPAGE") {
-    throw new TypeError("executeS2BuyOrders only executes SIMULATED_SLIPPAGE plans");
+  if (
+    plan.executionModel !== "SIMULATED_SLIPPAGE"
+    && plan.executionModel !== "SIMULATED_MINUTE_PARTICIPATION"
+  ) {
+    throw new TypeError("executeS2BuyOrders only executes simulated plans");
   }
   requireCalendarDate(input.tradeDate, "tradeDate");
   requireIsoTimestamp(input.executedAt, "executedAt");
@@ -1176,20 +1226,46 @@ export function executeS2BuyOrders(input: {
       slippageBps: plan.slippageBps,
       priceScale: Number(plan.fillPriceScale),
     });
-    const affordable = calculateMaxAffordableFutuBuyFill({
-      tradeDate: input.tradeDate,
-      requestedQuantity: order.quantity,
-      price: fillPrice,
-      buyingPower: remainingBuyingPower,
-      schedules: [applicableFeeSchedule],
-    });
+    const liquidity = plan.executionModel === "SIMULATED_MINUTE_PARTICIPATION"
+      ? calculateVolumeParticipationLimit({
+          requestedQuantity: order.quantity,
+          observedVolume: requiredObservedVolume(
+            officialOpenEvidence,
+            `officialOpenPrices.${order.instrumentId}.observedVolume`,
+          ),
+          maxParticipationBps: plan.maxParticipationBps!,
+        })
+      : null;
+    const capacityQuantity = liquidity?.maximumFillQuantity ?? order.quantity;
+    const affordable = capacityQuantity === "0"
+      ? zeroAffordableBuy(
+          input.tradeDate,
+          remainingBuyingPower,
+          applicableFeeSchedule,
+        )
+      : calculateMaxAffordableFutuBuyFill({
+          tradeDate: input.tradeDate,
+          requestedQuantity: capacityQuantity,
+          price: fillPrice,
+          buyingPower: remainingBuyingPower,
+          schedules: [applicableFeeSchedule],
+        });
     const filled = BigInt(affordable.affordableQuantity);
     const canceled = requested - filled;
+    const cashConstrained = filled < BigInt(capacityQuantity);
+    const liquidityConstrained = BigInt(capacityQuantity) < requested;
     const status = filled === requested
       ? "FILLED"
-      : filled === 0n
-        ? "CANCELED_CASH_LIMIT"
-        : "PARTIALLY_FILLED_CASH_LIMIT";
+      : cashConstrained
+        ? filled === 0n
+          ? "CANCELED_CASH_LIMIT"
+          : "PARTIALLY_FILLED_CASH_LIMIT"
+        : liquidityConstrained
+          ? filled === 0n
+            ? "CANCELED_LIQUIDITY_LIMIT"
+            : "PARTIALLY_FILLED_LIQUIDITY_LIMIT"
+          : /* istanbul ignore next -- algebraically unreachable */
+            "PARTIALLY_FILLED_CASH_LIMIT";
 
     remainingBuyingPower = requireNonNegative(
       subtractDecimals(remainingBuyingPower, affordable.totalCashRequired),
@@ -1234,6 +1310,7 @@ export function executeS2BuyOrders(input: {
       feeScheduleId: affordable.feeScheduleId,
       feeCurrency: affordable.currency,
       createdLot,
+      liquidity,
       status,
     }));
   }
@@ -1244,6 +1321,69 @@ export function executeS2BuyOrders(input: {
     buyingPowerEvidence,
     initialBuyingPower,
     remainingBuyingPower,
+  });
+}
+
+function validateParticipationPolicy(
+  executionModel: OrderExecutionModel,
+  value: string | undefined,
+): string | undefined {
+  if (executionModel !== "SIMULATED_MINUTE_PARTICIPATION") {
+    if (value !== undefined) {
+      throw new TypeError(
+        "maxParticipationBps is valid only for SIMULATED_MINUTE_PARTICIPATION",
+      );
+    }
+    return undefined;
+  }
+  if (value === undefined) {
+    throw new TypeError(
+      "SIMULATED_MINUTE_PARTICIPATION requires maxParticipationBps",
+    );
+  }
+  const participation = requireInteger(value, "maxParticipationBps", true);
+  if (participation > 10_000n) {
+    throw new RangeError("maxParticipationBps cannot exceed 10000");
+  }
+  return participation.toString();
+}
+
+function requiredObservedVolume(
+  evidence: FrozenMarketPriceEvidence,
+  field: string,
+): string {
+  if (evidence.observedVolume === undefined) {
+    throw new TypeError(`${field} is required by the frozen execution model`);
+  }
+  return requireInteger(evidence.observedVolume, field).toString();
+}
+
+function zeroAffordableBuy(
+  tradeDate: string,
+  buyingPower: DecimalString,
+  schedule: FutuFeeSchedule,
+) {
+  const zero = nonNegativeDecimal("0");
+  const fees = Object.freeze({
+    commission: zero,
+    platform: zero,
+    settlement: zero,
+    secRegulatory: zero,
+    finraTaf: zero,
+    cat: zero,
+  });
+  return Object.freeze({
+    feeScheduleId: schedule.feeScheduleId,
+    tradeDate,
+    currency: schedule.currency,
+    requestedQuantity: "0" as const,
+    affordableQuantity: "0" as const,
+    grossNotional: zero,
+    fees,
+    totalFees: zero,
+    totalCashRequired: zero,
+    buyingPower: nonNegativeDecimal(buyingPower),
+    isFullyAffordable: true,
   });
 }
 
