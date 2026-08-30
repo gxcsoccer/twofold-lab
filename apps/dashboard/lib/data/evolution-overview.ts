@@ -76,7 +76,10 @@ export function buildEvolutionOverview(rows: EvolutionRows): EvolutionOverview {
       (mode === "LOCAL_REPLAY" && scope !== "LOCAL")
       || (mode === "ONLINE_SHADOW" && scope !== "SHADOW")
     ) throw new TypeError("evolution trial has an invalid ranking scope");
-    trialByExperiment.set(text(row.experiment_id), scope as "LOCAL" | "SHADOW");
+    const experimentId = text(row.experiment_id);
+    if (!trialByExperiment.has(experimentId)) {
+      trialByExperiment.set(experimentId, scope as "LOCAL" | "SHADOW");
+    }
   }
   return Object.freeze({
     configured: true,

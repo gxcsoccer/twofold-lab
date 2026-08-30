@@ -50,6 +50,22 @@ describe("Arena cron HTTP boundary", () => {
     expect(tick).toHaveBeenCalledTimes(1);
   });
 
+  it("normalizes accidental surrounding whitespace in the configured secret", async () => {
+    const tick = vi.fn(async () => outcome);
+    const response = await handleArenaCronRequest(
+      new Request("https://example.test/api/arena/tick", {
+        headers: { authorization: "Bearer private-secret-123" },
+      }),
+      {
+        cronSecret: "  private-secret-123\n",
+        createRunner: () => ({ tick }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(tick).toHaveBeenCalledTimes(1);
+  });
+
   it("makes a fail-closed phase observable to the scheduler", async () => {
     const failed = { ...outcome, outcome: "failed" as const };
     const response = await handleArenaCronRequest(

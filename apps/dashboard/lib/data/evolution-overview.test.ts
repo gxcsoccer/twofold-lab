@@ -87,4 +87,27 @@ describe("evolution overview", () => {
       }],
     })).toThrow(/ranking scope/);
   });
+
+  it("keeps the newest trial scope when rows arrive newest-first", () => {
+    const overview = buildEvolutionOverview({
+      cycles: [], findings: [], decisionEvaluations: [],
+      experiments: [{
+        experiment_id: "experiment-1", experiment_code: "scope-transition",
+        mode: "ONLINE_SHADOW", status: "RUNNING", ranking_scope: "SHADOW",
+        human_approved_at: null, result: null,
+        updated_at: "2026-08-30T05:03:00.000Z",
+      }],
+      trials: [{
+        trial_id: "trial-new", experiment_id: "experiment-1",
+        trial_code: "scope-transition:new", mode: "ONLINE_SHADOW",
+        ranking_scope: "SHADOW", season_id: "season", round_id: "round",
+      }, {
+        trial_id: "trial-old", experiment_id: "experiment-1",
+        trial_code: "scope-transition:old", mode: "LOCAL_REPLAY",
+        ranking_scope: "LOCAL", season_id: null, round_id: null,
+      }],
+    });
+
+    expect(overview.experiments[0]?.trialScope).toBe("SHADOW");
+  });
 });

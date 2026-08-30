@@ -164,4 +164,48 @@ describe("Arena Agent decision phase handler", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("uses the registered index for a provisioned Round absent from the static config", async () => {
+    const root = mkdtempSync(join(tmpdir(), "twofold-provisioned-round-"));
+    const configRoot = join(root, "config");
+    mkdirSync(configRoot);
+    try {
+      writeFileSync(join(configRoot, "private-current.json"), JSON.stringify({
+        schema: "twofold.private_controlled_lab_config/v1",
+        season: { seasonId: item.seasonId },
+        decisionUniverse: null,
+        entrants: [{
+          entrantId: item.entrantId,
+          entrantCode: "twofold",
+          runId: item.runId,
+          bundleId: "twofold@0.1.0",
+          bundleSha256: "b".repeat(64),
+          executionClass: "ROOT_ONLY",
+          presetId: "twofold",
+          provider: "deepseek-official",
+          model: "deepseek-v4-pro",
+        }],
+        rounds: [{
+          roundId: "00000000-0000-4000-8000-000000000001",
+          roundIndex: "1",
+        }],
+      }));
+
+      await expect(loadCompetitionSeat(
+        root,
+        "config/private-current.json",
+        item,
+        "2",
+      )).resolves.toMatchObject({
+        roundIndex: "2",
+        identity: {
+          seasonId: item.seasonId,
+          runId: item.runId,
+          entrantCode: "twofold",
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

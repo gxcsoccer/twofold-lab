@@ -60,7 +60,7 @@ async function loadCompetitionContext(): Promise<DogfoodCompetitionContext> {
     season?: { seasonId?: unknown };
     entrants?: Array<Record<string, unknown>>;
     rounds?: Array<Record<string, unknown>>;
-    decisionUniverse?: LiquidUniverseReference;
+    decisionUniverse?: LiquidUniverseReference | null;
   };
   if (value.schema !== "twofold.private_controlled_lab_config/v1") {
     throw new TypeError("unsupported competition config schema");
@@ -103,7 +103,7 @@ async function loadCompetitionContext(): Promise<DogfoodCompetitionContext> {
   if (fields.executionClass !== "ROOT_ONLY" && fields.executionClass !== "ORCHESTRATED") {
     throw new TypeError("competition entrant uses an unsupported execution class");
   }
-  const decisionUniverse = value.decisionUniverse === undefined
+  const decisionUniverse = value.decisionUniverse == null
     ? undefined
     : await loadLiquidUniverseReference(repositoryRoot, value.decisionUniverse);
   return {

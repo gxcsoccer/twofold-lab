@@ -179,12 +179,6 @@ export function createRealArenaAgentDecisionExecution(input: {
         ? [access(resolve(harnessRoot, "package.json"))]
         : []),
     ]);
-    const seat = await loadCompetitionSeat(
-      repositoryRoot,
-      environment.TWOFOLD_COMPETITION_CONFIG
-        ?? "config/private-controlled-lab-s1.json",
-      item,
-    );
     const repository = new SupabaseArenaRepository(
       input.worker.supabaseUrl!,
       input.worker.supabaseSecretKey!,
@@ -193,6 +187,13 @@ export function createRealArenaAgentDecisionExecution(input: {
     const fence = await repository.roundEntrantFence(
       item.roundId,
       item.entrantId,
+    );
+    const seat = await loadCompetitionSeat(
+      repositoryRoot,
+      environment.TWOFOLD_COMPETITION_CONFIG
+        ?? "config/private-controlled-lab-s1.json",
+      item,
+      fence.roundIndex,
     );
     if (
       fence.roundEntryId !== item.roundEntryId
@@ -280,6 +281,7 @@ export async function loadCompetitionSeat(
   repositoryRoot: string,
   configPath: string,
   item: ArenaWorkItem,
+  registeredRoundIndex?: string,
 ): Promise<CompetitionSeat> {
   const configuredPath = resolve(repositoryRoot, configPath);
   const registryRoot = resolve(repositoryRoot, "config");
@@ -299,7 +301,7 @@ export async function loadCompetitionSeat(
     season?: { seasonId?: unknown };
     entrants?: Array<Record<string, unknown>>;
     rounds?: Array<Record<string, unknown>>;
-    decisionUniverse?: LiquidUniverseReference;
+    decisionUniverse?: LiquidUniverseReference | null;
     };
     if (
       raw.schema !== "twofold.private_controlled_lab_config/v1"
@@ -311,9 +313,14 @@ export async function loadCompetitionSeat(
     const round = raw.rounds?.find(
       (candidate) => candidate.roundId === item.roundId,
     );
+    const roundIndex = round?.roundIndex ?? registeredRoundIndex;
     if (
       entrant?.runId !== item.runId
-      || typeof round?.roundIndex !== "string"
+      || typeof roundIndex !== "string"
+      || !/^[1-9]\d*$/.test(roundIndex)
+      || (registeredRoundIndex !== undefined
+        && round?.roundIndex !== undefined
+        && round.roundIndex !== registeredRoundIndex)
       || typeof entrant?.entrantCode !== "string"
       || typeof entrant.bundleId !== "string"
       || typeof entrant.bundleSha256 !== "string"
@@ -326,7 +333,7 @@ export async function loadCompetitionSeat(
     ) {
       throw new TypeError("competition config does not match claimed Agent work");
     }
-    const decisionUniverse = raw.decisionUniverse === undefined
+    const decisionUniverse = raw.decisionUniverse == null
       ? undefined
       : await loadLiquidUniverseReference(repositoryRoot, raw.decisionUniverse);
     return Object.freeze({
@@ -339,7 +346,7 @@ export async function loadCompetitionSeat(
         presetId: entrant.presetId,
         executionClass: entrant.executionClass,
       }),
-      roundIndex: round.roundIndex,
+      roundIndex,
       ...(decisionUniverse === undefined ? {} : { decisionUniverse }),
     });
   }

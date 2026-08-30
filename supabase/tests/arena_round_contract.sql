@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(251);
+select plan(252);
 
 select has_table('public', 'arena_round', 'competition Rounds are durable');
 select has_column(
@@ -745,6 +745,16 @@ select is(
 );
 
 set local role service_role;
+select throws_ok(
+  $$select public.claim_arena_work_item(
+    'market-only-worker', 60, '2026-08-28T22:24:00.000Z',
+    'd5000000-0000-4000-8000-000000000001',
+    array['CAPTURE_S1_OPEN_REFERENCE', null]
+  )$$,
+  '22023',
+  'invalid capability-filtered Arena work claim',
+  'a capability-filtered claim rejects NULL phases'
+);
 select is(
   public.claim_arena_work_item(
     'market-only-worker', 60, '2026-08-28T22:24:00.000Z',

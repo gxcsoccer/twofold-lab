@@ -869,7 +869,7 @@ begin
     or p_allowed_phases is distinct from v_normalized_phases
     or exists (
       select 1 from unnest(p_allowed_phases) as requested(phase)
-       where requested.phase not in (
+       where requested.phase is null or requested.phase not in (
          'RUN_AGENT_DECISION', 'PREPARE_S1_ORDERS',
          'CAPTURE_S1_OPEN_REFERENCE', 'CAPTURE_S1_CLOSE',
          'SETTLE_S1_AND_PREPARE_S2', 'CAPTURE_S2_OPEN_REFERENCE',

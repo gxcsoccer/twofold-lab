@@ -15,7 +15,7 @@ export async function handleArenaCronRequest(
     readonly createRunner: () => ArenaCronRunner;
   },
 ): Promise<Response> {
-  const secret = input.cronSecret;
+  const secret = input.cronSecret?.trim();
   if (secret === undefined || secret.length < 16) {
     return json({ error: "cron is not configured" }, 503);
   }

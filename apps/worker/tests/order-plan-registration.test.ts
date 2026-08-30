@@ -183,6 +183,16 @@ describe("frozen order plan registration adapter", () => {
     });
   });
 
+  it("fails before DB admission when participation is zero", () => {
+    const plan = {
+      ...s2Plan(),
+      executionModel: "SIMULATED_MINUTE_PARTICIPATION" as const,
+      maxParticipationBps: "0",
+    };
+
+    expect(() => registration(plan)).toThrow("maxParticipationBps must be positive");
+  });
+
   it("rejects non-canonical uppercase UUIDs before DB admission", () => {
     const plan = s2Plan();
     expect(() => buildFrozenOrderPlanRegistration({
