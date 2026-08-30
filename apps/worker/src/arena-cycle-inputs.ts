@@ -275,7 +275,7 @@ function buildArenaThroughS1Base(
     "schema", "roundId", "seasonId", "stage", "fxRateId", "factId",
     "sourceVersionId", "sourceArtifactId", "sourceContentSha256",
     "rawBodySha256", "baseCurrency", "quoteCurrency", "cnyPerBaseUnit",
-    "effectiveAt", "visibleAt", "status", "authority", "crossSha256",
+    "requestedSessionDate", "effectiveAt", "visibleAt", "status", "authority", "crossSha256",
     "boundBy", "boundAt",
   ], "evidence.s1DispositionFx");
   if (
@@ -283,6 +283,8 @@ function buildArenaThroughS1Base(
     || fx.roundId !== material.roundEntry.roundId
     || fx.seasonId !== material.roundEntry.seasonId
     || fx.stage !== "S1_DISPOSITION"
+    || fx.requestedSessionDate !== material.round.s1SessionDate
+    || String(fx.effectiveAt).slice(0, 10) > material.round.s1SessionDate
     || fx.baseCurrency !== material.portfolio.account.baseCurrency
     || fx.quoteCurrency !== "CNY"
     || (fx.status !== "ESTIMATED" && fx.status !== "FINAL")
@@ -414,7 +416,7 @@ export function buildArenaFullCycleInput(
     "schema", "roundId", "seasonId", "stage", "fxRateId", "factId",
     "sourceVersionId", "sourceArtifactId", "sourceContentSha256",
     "rawBodySha256", "baseCurrency", "quoteCurrency", "cnyPerBaseUnit",
-    "effectiveAt", "visibleAt", "status", "authority", "crossSha256",
+    "requestedSessionDate", "effectiveAt", "visibleAt", "status", "authority", "crossSha256",
     "boundBy", "boundAt",
   ], "evidence.s2AcquisitionFx");
   if (
@@ -422,6 +424,8 @@ export function buildArenaFullCycleInput(
     || fx.roundId !== material.roundEntry.roundId
     || fx.seasonId !== material.roundEntry.seasonId
     || fx.stage !== "S2_ACQUISITION"
+    || fx.requestedSessionDate !== material.round.s2SessionDate
+    || String(fx.effectiveAt).slice(0, 10) > material.round.s2SessionDate
     || fx.baseCurrency !== material.portfolio.account.baseCurrency
     || fx.quoteCurrency !== "CNY"
     || (fx.status !== "ESTIMATED" && fx.status !== "FINAL")

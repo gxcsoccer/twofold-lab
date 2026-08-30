@@ -3,7 +3,7 @@ import type { AcceptedTargetSubmission } from "./contracts";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const INTEGER = /^(?:0|[1-9]\d*)$/;
-const SYMBOL = /^[A-Z][A-Z0-9.-]{0,9}$/;
+const SYMBOL = /^[A-Z][A-Z0-9.-]{0,14}$/;
 
 type RecordValue = Record<string, unknown>;
 
@@ -59,13 +59,13 @@ export function validateAcceptedTargetSubmission(
   const targets: Array<AcceptedTargetSubmission["targets"][number]> = [];
   let targetWeightTotal = 0n;
   const symbols = new Set<string>();
-  if (!Array.isArray(row.targets) || row.targets.length === 0) {
-    issues.push("submission.targets 必须是非空数组");
+  if (!Array.isArray(row.targets)) {
+    issues.push("submission.targets 必须是数组");
   } else {
     row.targets.forEach((candidate, index) => {
       const target = exactObject(candidate, `submission.targets[${index}]`, [
-        "symbol", "target_weight_bps", "rationale",
-      ], issues);
+        "symbol", "target_weight_bps",
+      ], issues, ["rationale"]);
       if (target === null) return;
       const symbol = string(
         target.symbol,
@@ -79,18 +79,24 @@ export function validateAcceptedTargetSubmission(
         INTEGER,
         issues,
       );
-      const rationale = nonEmptyString(
-        target.rationale,
-        `submission.targets[${index}].rationale`,
-        issues,
-      );
+      const rationale = Object.hasOwn(target, "rationale")
+        ? nonEmptyString(
+          target.rationale,
+          `submission.targets[${index}].rationale`,
+          issues,
+        )
+        : undefined;
       if (symbol !== null) {
         if (symbols.has(symbol)) issues.push(`submission.targets 的 symbol ${symbol} 重复`);
         symbols.add(symbol);
       }
       if (targetWeightBps !== null) targetWeightTotal += BigInt(targetWeightBps);
       if (symbol !== null && targetWeightBps !== null && rationale !== null) {
-        targets.push({ symbol, targetWeightBps, rationale });
+        targets.push({
+          symbol,
+          targetWeightBps,
+          ...(rationale === undefined ? {} : { rationale }),
+        });
       }
     });
   }
@@ -128,16 +134,19 @@ export function validateAcceptedTargetSubmission(
 function exactObject(
   value: unknown,
   path: string,
-  keys: readonly string[],
+  requiredKeys: readonly string[],
   issues: string[],
+  optionalKeys: readonly string[] = [],
 ): RecordValue | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     issues.push(`${path} 必须是对象`);
     return null;
   }
   const record = value as RecordValue;
-  const expected = new Set(keys);
-  for (const key of keys) if (!Object.hasOwn(record, key)) issues.push(`${path}.${key} 缺失`);
+  const expected = new Set([...requiredKeys, ...optionalKeys]);
+  for (const key of requiredKeys) {
+    if (!Object.hasOwn(record, key)) issues.push(`${path}.${key} 缺失`);
+  }
   for (const key of Object.keys(record)) {
     if (!expected.has(key)) issues.push(`${path}.${key} 不属于 dashboard contract`);
   }

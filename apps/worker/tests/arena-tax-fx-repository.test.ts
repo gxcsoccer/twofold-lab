@@ -54,6 +54,7 @@ function result(overrides: Record<string, unknown> = {}) {
     baseCurrency: "USD",
     quoteCurrency: "CNY",
     cnyPerBaseUnit: delivery.cross.cnyPerUsd,
+    requestedSessionDate: "2026-08-31",
     effectiveAt: "2026-08-31T00:00:00.000Z",
     visibleAt: delivery.observedAt,
     status: "ESTIMATED",
@@ -86,6 +87,7 @@ describe("Arena Round tax-FX repository", () => {
       delivery,
     })).resolves.toMatchObject({
       stage: "S1_DISPOSITION",
+      requestedSessionDate: "2026-08-31",
       cnyPerBaseUnit: delivery.cross.cnyPerUsd,
       status: "ESTIMATED",
     });

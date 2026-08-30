@@ -20,4 +20,21 @@ describe("worker configuration", () => {
       TWOFOLD_AGENT_LEASE_SECONDS: "600",
     }).agentLeaseSeconds).toBe(600);
   });
+
+  it("rejects every explicit lease beyond the Vercel execution ceiling", () => {
+    expect(() => loadWorkerConfig({
+      ...database,
+      VERCEL: "1",
+      TWOFOLD_LEASE_SECONDS: "781",
+    })).toThrow("between 5 and 780 seconds");
+    expect(() => loadWorkerConfig({
+      ...database,
+      VERCEL: "1",
+      TWOFOLD_AGENT_LEASE_SECONDS: "781",
+    })).toThrow("between 5 and 780 seconds");
+    expect(loadWorkerConfig({
+      ...database,
+      TWOFOLD_AGENT_LEASE_SECONDS: "3600",
+    }).agentLeaseSeconds).toBe(3_600);
+  });
 });

@@ -479,7 +479,7 @@ export interface AcceptedTargetSubmission {
   targets: ReadonlyArray<{
     symbol: string;
     targetWeightBps: string;
-    rationale: string;
+    rationale?: string;
   }>;
   cashWeightBps: string;
   decisionSummary: string;

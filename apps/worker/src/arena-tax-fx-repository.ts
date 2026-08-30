@@ -17,6 +17,7 @@ export interface ArenaRoundTaxFxReference {
   readonly baseCurrency: "USD";
   readonly quoteCurrency: "CNY";
   readonly cnyPerBaseUnit: string;
+  readonly requestedSessionDate: string;
   readonly effectiveAt: string;
   readonly visibleAt: string;
   readonly status: "ESTIMATED";
@@ -103,6 +104,7 @@ export async function registerArenaRoundTaxFxExact(
     || parsed.sourceContentSha256 !== expected.delivery.envelopeSha256
     || parsed.rawBodySha256 !== expected.delivery.rawBodySha256
     || parsed.cnyPerBaseUnit !== expected.delivery.cross.cnyPerUsd
+    || parsed.effectiveAt !== `${expected.delivery.cross.effectiveDate}T00:00:00.000Z`
     || parsed.crossSha256 !== expected.delivery.crossSha256
     || parsed.boundBy !== arguments_.p_recorded_by
   ) throw new TypeError("registered Arena tax-FX result is inconsistent");
@@ -115,7 +117,7 @@ function parse(value: unknown): ArenaRoundTaxFxReference {
     "schema", "roundId", "seasonId", "stage", "fxRateId", "factId",
     "sourceVersionId", "sourceArtifactId", "sourceContentSha256",
     "rawBodySha256", "baseCurrency", "quoteCurrency", "cnyPerBaseUnit",
-    "effectiveAt", "visibleAt", "status", "authority", "crossSha256",
+    "requestedSessionDate", "effectiveAt", "visibleAt", "status", "authority", "crossSha256",
     "boundBy", "boundAt",
   ]);
   if (row.schema !== "twofold.arena_round_tax_fx_reference/v1") {
@@ -125,6 +127,14 @@ function parse(value: unknown): ArenaRoundTaxFxReference {
     row.baseCurrency !== "USD" || row.quoteCurrency !== "CNY"
     || row.status !== "ESTIMATED" || row.authority !== "ECB_REFERENCE_CROSS"
   ) throw new TypeError("Arena tax-FX semantics are not supported");
+  const requestedSessionDate = date(
+    row.requestedSessionDate,
+    "requestedSessionDate",
+  );
+  const effectiveAt = timestamp(row.effectiveAt, "effectiveAt");
+  if (effectiveAt.slice(0, 10) > requestedSessionDate) {
+    throw new TypeError("Arena tax-FX effective date follows its requested session");
+  }
   return Object.freeze({
     schema: "twofold.arena_round_tax_fx_reference/v1",
     roundId: uuid(row.roundId, "roundId"),
@@ -139,7 +149,8 @@ function parse(value: unknown): ArenaRoundTaxFxReference {
     baseCurrency: "USD",
     quoteCurrency: "CNY",
     cnyPerBaseUnit: positiveDecimal(row.cnyPerBaseUnit, "cnyPerBaseUnit"),
-    effectiveAt: timestamp(row.effectiveAt, "effectiveAt"),
+    requestedSessionDate,
+    effectiveAt,
     visibleAt: timestamp(row.visibleAt, "visibleAt"),
     status: "ESTIMATED",
     authority: "ECB_REFERENCE_CROSS",
@@ -192,6 +203,14 @@ function timestamp(value: unknown, field: string): string {
   const parsed = identity(value, field);
   if (new Date(parsed).toISOString() !== parsed) {
     throw new TypeError(`${field} must be a canonical timestamp`);
+  }
+  return parsed;
+}
+function date(value: unknown, field: string): string {
+  const parsed = identity(value, field);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(parsed)
+    || new Date(`${parsed}T00:00:00.000Z`).toISOString().slice(0, 10) !== parsed) {
+    throw new TypeError(`${field} must be a calendar date`);
   }
   return parsed;
 }

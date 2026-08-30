@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(252);
+select plan(256);
 
 select has_table('public', 'arena_round', 'competition Rounds are durable');
 select has_column(
@@ -1298,6 +1298,10 @@ select has_table(
   'public', 'arena_round_tax_fx_reference',
   'tax-basis FX references are durable Round-shared evidence'
 );
+select has_column(
+  'public', 'arena_round_tax_fx_reference', 'requested_session_date',
+  'tax-FX evidence preserves the US session that requested an ECB reference'
+);
 select has_function(
   'public', 'register_arena_round_tax_fx_reference',
   array['text', 'uuid', 'text', 'uuid', 'text', 'text', 'text', 'text', 'text'],
@@ -1357,6 +1361,10 @@ select is(
 select is(
   (select value->>'status' from tax_fx_result),
   'ESTIMATED', 'the ECB reference is never labelled a final tax-authority rate'
+);
+select is(
+  (select value->>'requestedSessionDate' from tax_fx_result),
+  '2026-08-31', 'the tax-FX reference exposes its requested US session'
 );
 select is(
   (public.register_arena_round_tax_fx_reference(
@@ -2152,17 +2160,18 @@ insert into public.artifact_metadata (
     'schema', 'twofold.ecb_reference_source/v1',
     'sourceUrl',
       'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml',
-    'effectiveDate', '2026-09-01',
+    'effectiveDate', '2026-08-31',
     'observedAt', '2026-09-01T20:20:05.000Z',
     'rawBodySha256', repeat('d', 64)
   )
 );
 create temporary table s2_tax_fx_payload on commit drop as
 select
-  '{"authority":"ECB_REFERENCE_CROSS","availableAt":"2026-09-01T20:20:05.000Z","cnyPerUsd":"6.75","derivation":"EUR_CNY_DIV_EUR_USD_HALF_UP_12","effectiveDate":"2026-09-01","eurToCny":"7.83","eurToUsd":"1.16","observedAt":"2026-09-01T20:20:05.000Z","schema":"twofold.ecb_usd_cny_reference_cross/v1","status":"ESTIMATED"}'::text
+  '{"authority":"ECB_REFERENCE_CROSS","availableAt":"2026-09-01T20:20:05.000Z","cnyPerUsd":"6.75","derivation":"EUR_CNY_DIV_EUR_USD_HALF_UP_12","effectiveDate":"2026-08-31","eurToCny":"7.83","eurToUsd":"1.16","observedAt":"2026-09-01T20:20:05.000Z","schema":"twofold.ecb_usd_cny_reference_cross/v1","status":"ESTIMATED"}'::text
     as canonical_json;
 grant select on s2_tax_fx_payload to service_role;
 set local role service_role;
+create temporary table s2_tax_fx_result on commit drop as
 select public.register_arena_round_tax_fx_reference(
   'arena-round-contract:round:1:s2-tax-fx',
   'd5000000-0000-4000-8000-000000000001', 'S2_ACQUISITION',
@@ -2172,8 +2181,17 @@ select public.register_arena_round_tax_fx_reference(
     (select canonical_json from s2_tax_fx_payload), 'UTF8'
   ), 'sha256'), 'hex'),
   'arena-round-contract'
-);
+) as value;
 reset role;
+select is(
+  (select value->>'requestedSessionDate' from s2_tax_fx_result),
+  '2026-09-01', 'an ECB holiday reference preserves the requested US session'
+);
+select is(
+  (select value->>'effectiveAt' from s2_tax_fx_result),
+  '2026-08-31T00:00:00.000Z',
+  'an ECB holiday reference exposes the latest earlier publication date'
+);
 
 set local role service_role;
 create temporary table arena_final_material on commit drop as

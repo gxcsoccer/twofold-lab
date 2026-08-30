@@ -20,10 +20,11 @@ function boundedLease(
   value: string | undefined,
   fallback: number,
   name: string,
+  maximum: number,
 ): number {
   const parsed = positiveInteger(value, fallback, name);
-  if (parsed < 5 || parsed > 3_600) {
-    throw new Error(`${name} must be between 5 and 3600 seconds`);
+  if (parsed < 5 || parsed > maximum) {
+    throw new Error(`${name} must be between 5 and ${maximum} seconds`);
   }
   return parsed;
 }
@@ -34,6 +35,7 @@ export function loadWorkerConfig(
   const supabaseUrl = environment.SUPABASE_URL;
   const supabaseSecretKey = environment.SUPABASE_SECRET_KEY;
   const hasSupabase = Boolean(supabaseUrl && supabaseSecretKey);
+  const maximumLeaseSeconds = environment.VERCEL === "1" ? 780 : 3_600;
 
   if ((supabaseUrl === undefined) !== (supabaseSecretKey === undefined)) {
     throw new Error("SUPABASE_URL and SUPABASE_SECRET_KEY must be provided together");
@@ -53,11 +55,13 @@ export function loadWorkerConfig(
       environment.TWOFOLD_LEASE_SECONDS,
       60,
       "TWOFOLD_LEASE_SECONDS",
+      maximumLeaseSeconds,
     ),
     agentLeaseSeconds: boundedLease(
       environment.TWOFOLD_AGENT_LEASE_SECONDS,
       environment.VERCEL === "1" ? 780 : 1_800,
       "TWOFOLD_AGENT_LEASE_SECONDS",
+      maximumLeaseSeconds,
     ),
     ...(supabaseUrl === undefined ? {} : { supabaseUrl }),
     ...(supabaseSecretKey === undefined ? {} : { supabaseSecretKey }),

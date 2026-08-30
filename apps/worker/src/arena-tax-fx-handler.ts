@@ -56,6 +56,7 @@ export function createArenaTaxFxHandler(input: {
     }
     const delivery = await fetchEcbUsdCnyReferenceCross(input.config, {
       effectiveDate: timing.sessionDate,
+      allowPreviousDate: true,
       ...(input.fetchImplementation === undefined
         ? {}
         : { fetchImplementation: input.fetchImplementation }),

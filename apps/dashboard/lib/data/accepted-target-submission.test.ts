@@ -40,6 +40,30 @@ describe("accepted target submission dashboard contract", () => {
     });
   });
 
+  it("accepts every portfolio shape admitted by the database contract", () => {
+    expect(validateAcceptedTargetSubmission(row({
+      targets: [],
+      cash_weight_bps: "10000",
+      decision_summary: "Hold cash while no instrument clears the policy gate.",
+    }), DECISION, SUBMISSION)).toMatchObject({
+      ok: true,
+      value: { targets: [], cashWeightBps: "10000" },
+    });
+
+    expect(validateAcceptedTargetSubmission(row({
+      targets: [
+        { symbol: "ABCDEFGHIJKLMNO", target_weight_bps: "9500" },
+      ],
+    }), DECISION, SUBMISSION)).toMatchObject({
+      ok: true,
+      value: {
+        targets: [
+          { symbol: "ABCDEFGHIJKLMNO", targetWeightBps: "9500" },
+        ],
+      },
+    });
+  });
+
   it("fails closed on identity mismatch, duplicate symbols, or weight drift", () => {
     const result = validateAcceptedTargetSubmission(row({
       decision_id: "40000000-0000-4000-8000-000000000002",

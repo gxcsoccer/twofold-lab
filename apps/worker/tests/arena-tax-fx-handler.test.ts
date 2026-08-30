@@ -47,6 +47,7 @@ const existing = {
   baseCurrency: "USD",
   quoteCurrency: "CNY",
   cnyPerBaseUnit: "6.74",
+  requestedSessionDate: "2026-08-31",
   effectiveAt: "2026-08-31T00:00:00.000Z",
   visibleAt: "2026-08-31T20:20:05.000Z",
   status: "ESTIMATED",
@@ -91,9 +92,9 @@ describe("Arena tax-FX close handler", () => {
     expect(fetchImplementation).not.toHaveBeenCalled();
   });
 
-  it("captures S2 acquisition FX only at the S2 close boundary", async () => {
+  it("uses the latest ECB publication on or before an S2 session holiday", async () => {
     const repository = store(null);
-    const xml = `<Envelope><Cube><Cube time="2026-09-01">
+    const xml = `<Envelope><Cube><Cube time="2026-08-28">
       <Cube currency="USD" rate="1.16"/>
       <Cube currency="CNY" rate="7.82"/>
     </Cube></Cube></Envelope>`;
@@ -118,7 +119,7 @@ describe("Arena tax-FX close handler", () => {
       item.roundId,
       "S2_ACQUISITION",
       expect.objectContaining({
-        cross: expect.objectContaining({ effectiveDate: "2026-09-01" }),
+        cross: expect.objectContaining({ effectiveDate: "2026-08-28" }),
       }),
     );
   });

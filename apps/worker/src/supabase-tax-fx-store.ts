@@ -56,8 +56,8 @@ export class SupabaseArenaTaxFxStore implements ArenaTaxFxStore {
     const expectedDate = stage === "S1_DISPOSITION"
       ? round.s1_session_date
       : round.s2_session_date;
-    if (delivery.cross.effectiveDate !== expectedDate) {
-      throw new TypeError("ECB cross belongs to another Round session");
+    if (delivery.cross.effectiveDate > expectedDate) {
+      throw new TypeError("ECB cross follows the requested Round session");
     }
     const artifactId = await persistEcbSourceArtifact(
       this.#client,
@@ -66,7 +66,7 @@ export class SupabaseArenaTaxFxStore implements ArenaTaxFxStore {
       delivery,
     );
     try {
-      return await registerArenaRoundTaxFxExact(this.#client as never, {
+      const registered = await registerArenaRoundTaxFxExact(this.#client as never, {
         p_idempotency_key: `arena-tax-fx:${roundId}:${stage}`,
         p_round_id: roundId,
         p_stage: stage,
@@ -77,9 +77,18 @@ export class SupabaseArenaTaxFxStore implements ArenaTaxFxStore {
         p_cross_sha256: delivery.crossSha256,
         p_recorded_by: this.#workerId,
       }, { seasonId: round.season_id, delivery });
+      if (registered.requestedSessionDate !== expectedDate) {
+        throw new TypeError("registered ECB cross belongs to another Round session");
+      }
+      return registered;
     } catch (error) {
       const winner = await this.load(roundId, stage);
-      if (winner !== null) return winner;
+      if (winner !== null) {
+        if (winner.requestedSessionDate !== expectedDate) {
+          throw new TypeError("stored ECB cross belongs to another Round session");
+        }
+        return winner;
+      }
       throw error;
     }
   }

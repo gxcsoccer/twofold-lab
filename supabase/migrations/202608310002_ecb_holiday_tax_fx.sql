@@ -1,83 +1,41 @@
--- Tax-basis conversion is captured at settlement time from one shared ECB
--- reference cross. It is an ESTIMATED simulation input, never labelled a
--- final Chinese tax authority rate. Raw XML lives in the immutable artifact.
+-- Permit a US session to use the latest ECB reference rate published on or
+-- before that session while preserving both dates as immutable evidence.
 
 begin;
 
-create table public.arena_round_tax_fx_reference (
-  fx_reference_id uuid primary key,
-  fact_id uuid not null unique,
-  idempotency_key text not null unique check (idempotency_key <> ''),
-  round_id uuid not null,
-  season_id uuid not null,
-  stage text not null check (stage in ('S1_DISPOSITION', 'S2_ACQUISITION')),
-  source_version_id text not null
-    check (source_version_id = 'ecb-eurofxref-hist-90d-v1'),
-  source_artifact_id uuid not null,
-  source_content_sha256 text not null check (
-    source_content_sha256 ~ '^[0-9a-f]{64}$'
-  ),
-  raw_body_sha256 text not null check (raw_body_sha256 ~ '^[0-9a-f]{64}$'),
-  requested_session_date date not null,
-  effective_date date not null,
-  base_currency text not null check (base_currency = 'USD'),
-  quote_currency text not null check (quote_currency = 'CNY'),
-  cny_per_usd text not null check (
-    cny_per_usd ~ '^(0|[1-9][0-9]*)(\.[0-9]*[1-9])?$'
-    and cny_per_usd::numeric > 0
-  ),
-  authority text not null check (authority = 'ECB_REFERENCE_CROSS'),
-  status text not null check (status = 'ESTIMATED'),
-  observed_at timestamptz not null,
-  available_at timestamptz not null check (available_at >= observed_at),
-  cross_canonical_json text not null check (cross_canonical_json <> ''),
-  cross_evidence jsonb not null,
-  cross_sha256 text not null check (cross_sha256 ~ '^[0-9a-f]{64}$'),
-  bound_by text not null check (bound_by <> ''),
-  bound_at timestamptz not null default clock_timestamp(),
-  constraint arena_round_tax_fx_round_fk foreign key (round_id, season_id)
-    references public.arena_round(round_id, season_id),
-  constraint arena_round_tax_fx_artifact_fk foreign key (
-    source_artifact_id, source_content_sha256
-  ) references public.artifact_metadata(artifact_id, sha256),
-  constraint arena_round_tax_fx_stage_unique unique (round_id, stage),
-  constraint arena_round_tax_fx_effective_not_future check (
-    effective_date <= requested_session_date
-  ),
-  constraint arena_round_tax_fx_id_deterministic check (
-    fx_reference_id = public.deterministic_uuid_from_sha256(
-      'twofold.arena_round_tax_fx_reference/v1', round_id::text || ':' || stage
-    )
-  ),
-  constraint arena_round_tax_fx_fact_id_deterministic check (
-    fact_id = public.deterministic_uuid_from_sha256(
-      'twofold.arena_round_tax_fx_fact/v1', round_id::text || ':' || stage
-    )
-  ),
-  constraint arena_round_tax_fx_cross_object check (
-    jsonb_typeof(cross_evidence) = 'object'
-  ),
-  constraint arena_round_tax_fx_cross_decimal_safe check (
-    not public.jsonb_contains_number(cross_evidence)
-  ),
-  constraint arena_round_tax_fx_cross_exact check (
-    cross_evidence = cross_canonical_json::jsonb
-    and cross_sha256 = encode(
-      extensions.digest(convert_to(cross_canonical_json, 'UTF8'), 'sha256'),
-      'hex'
-    )
-  )
-);
+alter table public.arena_round_tax_fx_reference
+  add column if not exists requested_session_date date;
 
-comment on table public.arena_round_tax_fx_reference is
-  'One raw-artifact-backed ECB USD/CNY estimated reference shared by every entrant at each Round settlement stage.';
+alter table public.arena_round_tax_fx_reference
+  disable trigger arena_round_tax_fx_reference_is_immutable;
 
-create trigger arena_round_tax_fx_reference_is_immutable
-before update or delete on public.arena_round_tax_fx_reference
-for each row execute function public.reject_immutable_mutation();
-create trigger arena_round_tax_fx_reference_rejects_truncate
-before truncate on public.arena_round_tax_fx_reference
-for each statement execute function public.reject_immutable_mutation();
+update public.arena_round_tax_fx_reference as reference
+   set requested_session_date = case reference.stage
+     when 'S1_DISPOSITION' then round_.s1_session_date
+     when 'S2_ACQUISITION' then round_.s2_session_date
+   end
+  from public.arena_round as round_
+ where round_.round_id = reference.round_id;
+
+alter table public.arena_round_tax_fx_reference
+  enable trigger arena_round_tax_fx_reference_is_immutable;
+
+alter table public.arena_round_tax_fx_reference
+  alter column requested_session_date set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.arena_round_tax_fx_reference'::regclass
+       and conname = 'arena_round_tax_fx_effective_not_future'
+  ) then
+    alter table public.arena_round_tax_fx_reference
+      add constraint arena_round_tax_fx_effective_not_future
+        check (effective_date <= requested_session_date);
+  end if;
+end;
+$$;
 
 create or replace function public.get_arena_round_tax_fx_reference(
   p_round_id uuid,
@@ -314,20 +272,5 @@ begin
   return public.get_arena_round_tax_fx_reference(p_round_id, p_stage);
 end;
 $$;
-
-alter table public.arena_round_tax_fx_reference enable row level security;
-revoke all on table public.arena_round_tax_fx_reference
-  from public, anon, authenticated, service_role;
-grant select on table public.arena_round_tax_fx_reference to service_role;
-revoke all on function public.get_arena_round_tax_fx_reference(uuid, text)
-  from public, anon, authenticated;
-revoke all on function public.register_arena_round_tax_fx_reference(
-  text, uuid, text, uuid, text, text, text, text, text
-) from public, anon, authenticated;
-grant execute on function public.get_arena_round_tax_fx_reference(uuid, text)
-  to service_role;
-grant execute on function public.register_arena_round_tax_fx_reference(
-  text, uuid, text, uuid, text, text, text, text, text
-) to service_role;
 
 commit;

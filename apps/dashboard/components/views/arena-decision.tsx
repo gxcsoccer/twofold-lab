@@ -567,17 +567,21 @@ export function ArenaDecisionView({ initialData }: { initialData: ArenaDecisionP
           <p className="accepted-target-decision-summary">
             {data.acceptedSubmission.decisionSummary}
           </p>
-          <ol className="accepted-target-list">
-            {data.acceptedSubmission.targets.map((target) => (
-              <li key={target.symbol}>
-                <div>
-                  <strong className="mono">{target.symbol}</strong>
-                  <span className="tabular">{formatWeightBps(target.targetWeightBps)}</span>
-                </div>
-                <p>{target.rationale}</p>
-              </li>
-            ))}
-          </ol>
+          {data.acceptedSubmission.targets.length === 0 ? (
+            <p className="table-note">本轮未持有股票，目标组合为 100% 现金。</p>
+          ) : (
+            <ol className="accepted-target-list">
+              {data.acceptedSubmission.targets.map((target) => (
+                <li key={target.symbol}>
+                  <div>
+                    <strong className="mono">{target.symbol}</strong>
+                    <span className="tabular">{formatWeightBps(target.targetWeightBps)}</span>
+                  </div>
+                  {target.rationale ? <p>{target.rationale}</p> : null}
+                </li>
+              ))}
+            </ol>
+          )}
           <dl className="definition-list arena-definition-list accepted-target-evidence">
             <div><dt>Submission SHA-256</dt><dd className="mono hash-value">{data.acceptedSubmission.submissionSha256}</dd></div>
             <div><dt>接受时间</dt><dd>{formatDateTime(data.acceptedSubmission.acceptedAt)}</dd></div>
