@@ -1,14 +1,32 @@
 import Decimal from "decimal.js";
 
-const dateTime = new Intl.DateTimeFormat("zh-CN", {
-  month: "short",
-  day: "numeric",
+/**
+ * Timestamps are composed from parts rather than handed to a locale format,
+ * because zh-CN puts the zone abbreviation in the middle ("2026年9月2日 GMT-4
+ * 16:00"). An operator console wants one sortable, unambiguous shape in the
+ * data face: `2026-09-02 16:00 EDT`.
+ */
+const marketParts = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
   hour: "2-digit",
   minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
   timeZone: "America/New_York",
   timeZoneName: "short",
 });
+
+function marketTimeParts(value: string): Record<string, string> | null {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  const parts: Record<string, string> = {};
+  for (const part of marketParts.formatToParts(at)) {
+    parts[part.type] = part.value;
+  }
+  return parts;
+}
 
 const shortDate = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -57,7 +75,18 @@ export function formatPercent(value: Decimal.Value, digits = 2): string {
 }
 
 export function formatDateTime(value: string): string {
-  return dateTime.format(new Date(value));
+  const parts = marketTimeParts(value);
+  // An unparseable timestamp is shown verbatim rather than as "Invalid Date".
+  if (parts === null) return value;
+  return `${parts.year}-${parts.month}-${parts.day} `
+    + `${parts.hour}:${parts.minute} ${parts.timeZoneName}`;
+}
+
+/** Time of day only, for the now-cursor and the round spine. */
+export function formatClock(value: string): string {
+  const parts = marketTimeParts(value);
+  if (parts === null) return value;
+  return `${parts.hour}:${parts.minute}:${parts.second} ${parts.timeZoneName}`;
 }
 
 export function formatShortDate(value: string): string {

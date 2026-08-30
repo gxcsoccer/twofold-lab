@@ -9,11 +9,13 @@ import type {
 export function PageHeader({
   eyebrow,
   title,
+  subtitle,
   description,
   actions,
 }: {
   eyebrow: string;
   title: string;
+  subtitle?: string;
   description: string;
   actions?: React.ReactNode;
 }) {
@@ -21,7 +23,10 @@ export function PageHeader({
     <div className="page-header">
       <div>
         <p className="eyebrow">{eyebrow}</p>
-        <h1>{title}</h1>
+        <h1>
+          {title}
+          {subtitle ? <small className="page-subtitle">{subtitle}</small> : null}
+        </h1>
         <p className="page-description">{description}</p>
       </div>
       {actions ? <div className="page-actions">{actions}</div> : null}
@@ -32,11 +37,131 @@ export function PageHeader({
 export function StatusBadge({
   label,
   tone = "neutral",
+  code = false,
 }: {
   label: string;
   tone?: StatusTone;
+  /** Enum values keep their machine spelling, because operators grep for them. */
+  code?: boolean;
 }) {
-  return <span className={"badge badge-" + tone}>{label}</span>;
+  return (
+    <span className={`badge badge-${tone}${code ? " badge-code" : ""}`}>
+      {label}
+    </span>
+  );
+}
+
+/**
+ * The fail-closed primitive.
+ *
+ * A missing value must never look like `0`, and never like a normal value. It
+ * gets a hatched fill, a dashed border, and a machine-readable reason code.
+ * `pending` is for "not due yet", which is normal and speaks more quietly than
+ * a breach.
+ */
+export function Unsealed({
+  label,
+  reason,
+  pending = false,
+}: {
+  label: string;
+  reason?: string;
+  pending?: boolean;
+}) {
+  return (
+    <span className={pending ? "unsealed unsealed-pending" : "unsealed"}>
+      {label}
+      {reason ? <code>{reason}</code> : null}
+    </span>
+  );
+}
+
+export function Note({
+  title,
+  children,
+  tone = "neutral",
+}: {
+  title?: string;
+  children: React.ReactNode;
+  tone?: StatusTone;
+}) {
+  return (
+    <div className={tone === "neutral" ? "note" : `note note-${tone}`}>
+      {title ? <strong>{title}</strong> : null}
+      {children}
+    </div>
+  );
+}
+
+export function SectionHeading({
+  eyebrow,
+  title,
+  note,
+  compact = false,
+}: {
+  eyebrow: string;
+  title: string;
+  note?: React.ReactNode;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "section-heading compact-heading" : "section-heading"}>
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h2>{title}</h2>
+      </div>
+      {note ?? null}
+    </div>
+  );
+}
+
+/** The readout strip: one bordered instrument rather than a row of cards. */
+export function Readout({
+  columns = 4,
+  last = true,
+  children,
+  label,
+}: {
+  columns?: 3 | 4 | 5;
+  last?: boolean;
+  children: React.ReactNode;
+  label: string;
+}) {
+  const variant = columns === 3
+    ? " ruler-readout-three"
+    : columns === 5
+      ? " ruler-readout-five"
+      : "";
+  return (
+    <section className="panel panel-flush" aria-label={label}>
+      <div className={`ruler-readout${variant}${last ? " ruler-readout-last" : ""}`}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+export function ReadoutCell({
+  label,
+  value,
+  detail,
+  text = false,
+}: {
+  label: string;
+  value: React.ReactNode;
+  detail: React.ReactNode;
+  /** Set for prose values so they use the body face, not the data face. */
+  text?: boolean;
+}) {
+  return (
+    <div>
+      <p className="readout-label">{label}</p>
+      <p className={text ? "readout-value readout-value-text" : "readout-value"}>
+        {value}
+      </p>
+      <p className="readout-detail">{detail}</p>
+    </div>
+  );
 }
 
 export function ConnectionNote({ connection }: { connection: ConnectionSummary }) {
@@ -57,10 +182,7 @@ export function ConnectionNote({ connection }: { connection: ConnectionSummary }
         <p className="connection-label">{connection.label}</p>
         <p>{connection.detail}</p>
       </div>
-      <StatusBadge
-        label={badge.label}
-        tone={badge.tone}
-      />
+      <StatusBadge label={badge.label} tone={badge.tone} />
     </div>
   );
 }
@@ -99,7 +221,15 @@ export function SetupRequired({
         };
 
   return (
-    <section className={compact ? "setup-panel setup-panel-compact" : "setup-panel"}>
+    <section
+      className={
+        readStatus === "ERROR"
+          ? "setup-panel decision-failure-panel"
+          : compact
+            ? "setup-panel setup-panel-compact"
+            : "setup-panel"
+      }
+    >
       <div className="setup-intro">
         <StatusBadge label={heading.badge} tone={heading.tone} />
         <h2>{heading.title}</h2>
@@ -109,7 +239,7 @@ export function SetupRequired({
             检查设置
           </Link>
           <Link className="text-link" href="/data">
-            查看真实数据接入状态
+            查看真实数据接入状态 →
           </Link>
         </div>
       </div>

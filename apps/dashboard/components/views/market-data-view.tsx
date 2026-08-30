@@ -2,9 +2,12 @@ import Link from "next/link";
 
 import {
   ConnectionNote,
-  MetricCard,
+  Note,
   PageHeader,
+  ReadoutCell,
+  SectionHeading,
   StatusBadge,
+  Unsealed,
 } from "@/components/ui";
 import type { MarketDataPageData, StatusTone } from "@/lib/data/contracts";
 import { formatDateTime, formatInteger } from "@/lib/format";
@@ -39,78 +42,86 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="真实数据"
+        eyebrow="Real data · evidence chain"
         title="市场数据证据链"
-        description="这里只展示已从 Provider 获取、私有归档、规范化并按可见时间封存的数据；不存在运行时演示回退。"
+        subtitle={
+          data.source
+            ? `${data.source.provider} · ${data.source.feed} · ${data.source.timeframe} · adjustment=${data.source.adjustment}`
+            : undefined
+        }
+        description="这里只列出已从 Provider 取回、私有归档、规范化，并按可见时间封存的数据；不存在运行时演示回退。"
         actions={<StatusBadge label={statusLabel(data.status)} tone={statusTone(data.status)} />}
       />
 
       {data.status !== "READY" ? (
         <section className="panel">
-          <div className="section-heading compact-heading">
-            <div>
-              <p className="eyebrow">Fail closed</p>
-              <h2>真实数据尚不可用</h2>
-            </div>
-          </div>
+          <SectionHeading eyebrow="Fail closed" title="真实数据尚不可用" compact />
           <ul className="risk-list">
             {data.issues.map((issue) => <li key={issue}>{issue}</li>)}
           </ul>
-          <div className="security-note">
-            <strong>所需 Worker 配置</strong>
+          <Note title="所需 Worker 配置" tone="informative">
             <p className="mono">
               SUPABASE_URL · SUPABASE_SECRET_KEY · ALPACA_API_KEY_ID ·
               ALPACA_API_SECRET_KEY
             </p>
-          </div>
+          </Note>
           <div className="panel-footer">
             <span>Provider 凭证只进入 Worker，不进入浏览器、模型提示词或事件 payload。</span>
-            <Link className="text-link" href="/data">重新读取状态</Link>
+            <Link className="text-link" href="/data">重新读取状态 →</Link>
           </div>
         </section>
       ) : null}
 
       {data.source ? (
-        <section className="metrics-grid" aria-label="真实数据源状态">
-          <MetricCard
-            label="Provider / Feed"
-            value={`${data.source.provider.toUpperCase()} · ${data.source.feed.toUpperCase()}`}
-            detail={`${data.source.timeframe} · adjustment=${data.source.adjustment}`}
-          />
-          <MetricCard
-            label="贡献 Delivery"
-            value={formatInteger(String(data.deliveries.length))}
-            detail={
-              mostRecentDelivery
-                ? `最近 ${formatDateTime(mostRecentDelivery.retrievedAt)}`
-                : "尚无封存快照来源"
-            }
-          />
-          <MetricCard
-            label="已封存标的"
-            value={data.snapshot ? formatInteger(String(data.snapshot.symbols.length)) : "0"}
-            detail={data.snapshot?.symbols.join(" · ") ?? "等待完整快照"}
-          />
-          <MetricCard
-            label="快照截止时间"
-            value={data.snapshot ? formatDateTime(data.snapshot.cutoffAt) : "尚未封存"}
-            detail="只允许 available_at 不晚于 cutoff 的事实"
-          />
+        <section className="panel panel-flush" aria-label="真实数据源状态">
+          <div className="ruler-readout ruler-readout-last">
+            <ReadoutCell
+              label="Provider / feed"
+              value={`${data.source.provider.toUpperCase()} · ${data.source.feed.toUpperCase()}`}
+              detail={`${data.source.timeframe} · adjustment=${data.source.adjustment}`}
+            />
+            <ReadoutCell
+              label="贡献 Delivery"
+              value={formatInteger(String(data.deliveries.length))}
+              detail={
+                mostRecentDelivery
+                  ? `最近取回 ${formatDateTime(mostRecentDelivery.retrievedAt)}`
+                  : "尚无封存快照来源"
+              }
+            />
+            <ReadoutCell
+              label="已封存标的"
+              value={data.snapshot ? formatInteger(String(data.snapshot.symbols.length)) : "0"}
+              detail={
+                data.snapshot
+                  ? `目标交易日 ${data.snapshot.targetSessionDate}`
+                  : "等待完整快照"
+              }
+            />
+            <ReadoutCell
+              label="快照截止时间"
+              value={
+                data.snapshot
+                  ? formatDateTime(data.snapshot.cutoffAt)
+                  : <Unsealed label="尚未封存" pending />
+              }
+              detail="只接受 available_at 不晚于截止的事实"
+              text={data.snapshot === null}
+            />
+          </div>
         </section>
       ) : null}
 
       {data.bars.length > 0 ? (
-        <section className="panel leaderboard-panel">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">封存成员</p>
-              <h2>
-                {data.source?.adjustment === "raw" ? "未复权" : data.source?.adjustment}
-                {" "}{data.source?.feed.toUpperCase()} 日线
-              </h2>
-            </div>
-            <span>货币 USD</span>
-          </div>
+        <section className="panel panel-flush">
+          <SectionHeading
+            eyebrow="Sealed members"
+            title={
+              `${data.source?.adjustment === "raw" ? "未复权" : data.source?.adjustment ?? ""} `
+              + `${data.source?.feed.toUpperCase() ?? ""} 日线`
+            }
+            note={<span>货币 USD · 价格为规范化十进制字符串</span>}
+          />
           <div className="table-scroll">
             <table>
               <thead>
@@ -130,11 +141,11 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
                 {data.bars.map((bar) => (
                   <tr key={bar.factId}>
                     <td><strong>{bar.symbol}</strong></td>
-                    <td className="tabular">{bar.barDate}</td>
-                    <td className="numeric tabular">${bar.openPrice}</td>
-                    <td className="numeric tabular">${bar.highPrice}</td>
-                    <td className="numeric tabular">${bar.lowPrice}</td>
-                    <td className="numeric tabular">${bar.closePrice}</td>
+                    <td className="mono">{bar.barDate}</td>
+                    <td className="numeric tabular">{bar.openPrice}</td>
+                    <td className="numeric tabular">{bar.highPrice}</td>
+                    <td className="numeric tabular">{bar.lowPrice}</td>
+                    <td className="numeric tabular">{bar.closePrice}</td>
                     <td className="numeric tabular">{formatInteger(bar.volume)}</td>
                     <td className="mono">
                       {bar.deliveryIds.map(shortHash).join(" · ")}
@@ -145,88 +156,160 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
               </tbody>
             </table>
           </div>
+          {data.snapshot && data.bars.length < data.snapshot.symbols.length ? (
+            <div className="panel-footer">
+              <span>
+                显示 {data.bars.length} / {data.snapshot.symbols.length} 条 ·
+                完整成员清单由 snapshot manifest 决定
+              </span>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
       {data.source ? (
-        <section className="panel">
-          <div className="section-heading compact-heading">
-            <div>
-              <p className="eyebrow">可审计证据</p>
-              <h2>版本、Raw 与 Snapshot</h2>
-            </div>
-          </div>
-          <dl className="definition-list usage-definition-list">
-            <div>
-              <dt>Source version</dt>
-              <dd className="mono">{data.source.versionKey}</dd>
-            </div>
-            <div>
-              <dt>Normalizer</dt>
-              <dd className="mono">{data.source.normalizerVersion}</dd>
-            </div>
-            <div>
-              <dt>License scope</dt>
-              <dd>{data.source.licenseScope}</dd>
-            </div>
-            {data.deliveries.map((delivery, index) => (
-              <div key={delivery.deliveryId}>
-                <dt>贡献 Delivery / Raw #{index + 1}</dt>
-                <dd>
-                  <span className="mono">{delivery.deliveryId}</span>
-                  <br />
-                  <span className="mono">artifact {delivery.rawArtifactId}</span>
-                  <br />
-                  <span className="mono">SHA-256 {delivery.responseSha256}</span>
-                  <br />
-                  <span className="mono">
-                    manifest {delivery.normalizedManifestSha256}
-                  </span>
-                  <br />
-                  <span className="mono">
-                    {delivery.storageBucket}/{delivery.objectPath}
-                  </span>
-                  <br />
-                  <span>
-                    获取于 {formatDateTime(delivery.retrievedAt)}
-                    {` · 可用于 ${formatDateTime(delivery.availableAt)}`}
-                    {delivery.providerRequestId
-                      ? ` · request ${delivery.providerRequestId}`
-                      : " · Provider 未返回 request ID"}
-                  </span>
-                  <br />
-                  <span className="mono">
-                    {delivery.contentType} · {formatInteger(delivery.byteSize)} bytes
-                  </span>
-                </dd>
+        <div className="two-column-grid">
+          <div className="column-stack">
+            <section className="panel panel-flush">
+              <SectionHeading
+                eyebrow="Raw archive"
+                title="贡献 Delivery"
+                note={
+                  <p>
+                    对快照有贡献的原始响应
+                    <br />
+                    逐字节归档，内容寻址
+                  </p>
+                }
+              />
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Delivery</th>
+                      <th scope="col">响应 SHA-256</th>
+                      <th scope="col">归档路径</th>
+                      <th scope="col" className="numeric">字节</th>
+                      <th scope="col">取回 / 可用</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.deliveries.map((delivery) => (
+                      <tr key={delivery.deliveryId}>
+                        <td className="mono">{shortHash(delivery.deliveryId)}</td>
+                        <td className="mono">{shortHash(delivery.responseSha256)}</td>
+                        <td className="mono">
+                          {delivery.storageBucket}/{delivery.objectPath}
+                        </td>
+                        <td className="numeric tabular">
+                          {formatInteger(delivery.byteSize)}
+                        </td>
+                        <td className="mono">
+                          {formatDateTime(delivery.retrievedAt)}
+                          <br />
+                          {formatDateTime(delivery.availableAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
-            <div>
-              <dt>Snapshot ID</dt>
-              <dd className="mono">{data.snapshot?.snapshotId ?? "尚未封存"}</dd>
-            </div>
-            <div>
-              <dt>Snapshot manifest</dt>
-              <dd className="mono">{data.snapshot?.manifestSha256 ?? "尚未封存"}</dd>
-            </div>
-            <div>
-              <dt>Manifest schema</dt>
-              <dd className="mono">{data.snapshot?.manifestSchema ?? "尚未封存"}</dd>
-            </div>
-            <div>
-              <dt>Target session</dt>
-              <dd className="mono">{data.snapshot?.targetSessionDate ?? "尚未封存"}</dd>
-            </div>
-            <div>
-              <dt>Selection policy</dt>
-              <dd className="mono">{data.snapshot?.selectionPolicy ?? "尚未封存"}</dd>
-            </div>
-          </dl>
-          <ConnectionNote connection={data.connection} />
-        </section>
+              <div className="panel-footer">
+                <span>
+                  Provider request ID 由响应头带回；
+                  {data.deliveries.some((delivery) => delivery.providerRequestId === null)
+                    ? "本批中有响应未返回该 ID，已如实标注。"
+                    : "本批全部返回。"}
+                </span>
+              </div>
+            </section>
+          </div>
+
+          <div className="column-stack">
+            <section className="panel">
+              <SectionHeading
+                eyebrow="Snapshot"
+                title="封存凭据"
+                note={
+                  data.snapshot
+                    ? <StatusBadge label="已封存" tone="positive" />
+                    : <StatusBadge label="尚未封存" tone="warning" />
+                }
+                compact
+              />
+              <dl className="definition-list">
+                <div>
+                  <dt>Snapshot ID</dt>
+                  <dd className="mono hash-value">
+                    {data.snapshot?.snapshotId ?? <Unsealed label="尚未封存" pending />}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Manifest SHA-256</dt>
+                  <dd className="mono hash-value">
+                    {data.snapshot
+                      ? shortHash(data.snapshot.manifestSha256)
+                      : <Unsealed label="尚未封存" pending />}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Manifest schema</dt>
+                  <dd className="mono">{data.snapshot?.manifestSchema ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>Selection policy</dt>
+                  <dd className="mono">{data.snapshot?.selectionPolicy ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>Source version</dt>
+                  <dd className="mono">{data.source.versionKey}</dd>
+                </div>
+                <div>
+                  <dt>Normalizer</dt>
+                  <dd className="mono">{data.source.normalizerVersion}</dd>
+                </div>
+                <div>
+                  <dt>License scope</dt>
+                  <dd>{data.source.licenseScope}</dd>
+                </div>
+                <div>
+                  <dt>封存时间</dt>
+                  <dd className="mono">
+                    {data.snapshot
+                      ? formatDateTime(data.snapshot.sealedAt)
+                      : <Unsealed label="尚未封存" pending />}
+                  </dd>
+                </div>
+              </dl>
+              <ConnectionNote connection={data.connection} />
+            </section>
+          </div>
+        </div>
       ) : (
         <ConnectionNote connection={data.connection} />
       )}
+
+      {data.source ? (
+        <section className="panel">
+          <SectionHeading
+            eyebrow="Boundary"
+            title="这条链上谁能碰什么"
+            note={<span>凭证只往一个方向流动</span>}
+            compact
+          />
+          <div className="principle-grid">
+            <Note title="Worker 持有凭证" tone="informative">
+              Alpaca 与 Supabase 密钥只存在于 Worker 的密钥层，不进入浏览器、模型提示词或事件 payload。
+            </Note>
+            <Note title="浏览器只收到状态" tone="warning">
+              控制台读的是 Supabase 投影，不是 Provider。缺一页就整批不封存，也不补写。
+            </Note>
+            <Note title="快照只增不改" tone="critical">
+              修订以新版本追加；旧快照永远可以被重新解释一遍，得到同一个账本。
+            </Note>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
