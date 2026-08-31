@@ -236,7 +236,11 @@ function validateEntrant(
   for (const field of ["bundleId", "presetId", "provider", "model"] as const) {
     string(value[field], `${path}.${field}`, issues);
   }
-  if (value.executionClass !== "ROOT_ONLY" && value.executionClass !== "ORCHESTRATED") {
+  if (
+    value.executionClass !== "ROOT_ONLY"
+    && value.executionClass !== "ORCHESTRATED"
+    && value.executionClass !== "DETERMINISTIC_BASELINE"
+  ) {
     issues.push(`${path}.executionClass 无效`);
   }
   nullableString(value.roundEntryId, `${path}.roundEntryId`, issues, UUID);

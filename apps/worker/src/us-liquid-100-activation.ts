@@ -25,6 +25,14 @@ export function planUsLiquid100Activation(input: {
   readonly snapshot: SealedUniverseSnapshot;
   readonly now: string;
   readonly activationDelayMinutes: number;
+  /**
+   * Instruments a deterministic baseline needs priced that are deliberately
+   * outside the decision universe - SPY and QQQ are ETFs the Liquid 100 builder
+   * excludes on purpose. They must be declared here rather than tolerated as
+   * unexplained snapshot members, so the sealed snapshot is still an exact,
+   * auditable set and an accidentally wrong snapshot still fails closed.
+   */
+  readonly baselineSymbols?: readonly string[];
 }): UsLiquid100ActivationPlan {
   if (
     input.artifact.schema !== "twofold.liquid_universe_freeze/v1"
@@ -40,11 +48,22 @@ export function planUsLiquid100Activation(input: {
   const artifactSymbols = input.artifact.members
     .map((member) => member.symbol)
     .sort(compareText);
+  const baselineSymbols = [...(input.baselineSymbols ?? [])].sort(compareText);
+  if (new Set(baselineSymbols).size !== baselineSymbols.length) {
+    throw new TypeError("baseline symbols contain a duplicate");
+  }
+  if (baselineSymbols.some((symbol) => artifactSymbols.includes(symbol))) {
+    throw new TypeError("a baseline symbol is already in the decision universe");
+  }
+  // The snapshot may be a superset of the decision universe, but only by the
+  // exact declared baseline instruments. Equality against that union keeps the
+  // sealed member set auditable instead of merely permissive.
+  const expectedSymbols = [...artifactSymbols, ...baselineSymbols].sort(compareText);
   const snapshotSymbols = [...input.snapshot.symbols].sort(compareText);
   if (
     new Set(artifactSymbols).size !== 100
-    || new Set(snapshotSymbols).size !== 100
-    || artifactSymbols.some((symbol, index) => symbol !== snapshotSymbols[index])
+    || new Set(snapshotSymbols).size !== expectedSymbols.length
+    || expectedSymbols.some((symbol, index) => symbol !== snapshotSymbols[index])
   ) throw new TypeError("snapshot does not reproduce the frozen member set");
   if (
     !Number.isSafeInteger(input.activationDelayMinutes)

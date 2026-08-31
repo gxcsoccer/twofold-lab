@@ -297,7 +297,7 @@ begin
 end;
 $$;
 
-select plan(63);
+select plan(70);
 
 select has_table('public', 'decision_invocation', 'decision_invocation exists');
 select has_table('public', 'agent_session_lineage', 'agent_session_lineage exists');
@@ -1414,6 +1414,206 @@ select ok(
     'SELECT'
   ),
   'service_role can read the root-attribution view'
+);
+
+
+-- Deterministic baseline: the invocation boundary must accept a model-free
+-- entrant's own artifact kinds, derive its decision kind from immutable entrant
+-- identity, and refuse to bill it a token.
+
+select public.register_run_manifest(
+  'arena:baseline:run',
+  '51000000-0000-4000-8000-000000000001',
+  'twofold.run_manifest/v1',
+  '{"engine_version":"arena-contract-v1","lot_method":"FIFO"}',
+  'arena-contract', repeat('9', 64)
+);
+
+select public.register_arena_season(
+  'arena:baseline:season',
+  '51000000-0000-4000-8000-000000000002',
+  'arena-contract-baseline-season',
+  'Arena Contract Baseline Season',
+  '2026-08-22T00:00:00Z'::timestamptz,
+  '2026-09-30T00:00:00Z'::timestamptz,
+  'US_EQUITY_DAILY_AFTER_CLOSE',
+  'America/New_York',
+  '{"purpose":"arena-contract-baseline"}'::jsonb,
+  'arena-contract'
+);
+
+select is(
+  (public.register_season_entrant(
+    'arena:baseline:entrant',
+    '51000000-0000-4000-8000-000000000004',
+    '51000000-0000-4000-8000-000000000002',
+    'baseline-hold-lulu',
+    '51000000-0000-4000-8000-000000000001',
+    'twofold-baseline-hold-genesis@1.0.0',
+    '14a7e54b2244e417e48b653a27742ce41038855a306e8b4ad2ff1da7b6016b39',
+    'none', 'none', 'none',
+    'DETERMINISTIC_BASELINE',
+    '{"track":"MAIN_ARENA"}'::jsonb,
+    'arena-contract'
+  )).execution_class,
+  'DETERMINISTIC_BASELINE',
+  'a model-free baseline holds a ranked seat in the decision fixture Season'
+);
+
+select is(
+  (public.register_artifact(
+    'arena:baseline:packet',
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002',
+    null,
+    'baseline_decision_packet',
+    'twofold-private-artifacts',
+    'packets/' || repeat('ba', 32) || '.json',
+    'application/json', 512, repeat('ba', 32),
+    'arena-contract',
+    jsonb_build_object(
+      'schema', 'twofold.baseline_decision_packet/v1',
+      'decisionId', '51000000-0000-4000-8000-000000000003',
+      'marketSnapshotId', (
+        select snapshot_id::text from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      ),
+      'marketManifestSha256', (
+        select manifest_sha256 from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      )
+    )
+  )).artifact_kind,
+  'baseline_decision_packet',
+  'a baseline registers its own packet kind rather than an Agent packet'
+);
+
+select is(
+  (public.register_artifact(
+    'arena:baseline:policy',
+    null,
+    '51000000-0000-4000-8000-000000000002',
+    null,
+    'deterministic_baseline_policy',
+    'twofold-private-artifacts',
+    'policies/' || repeat('bb', 32) || '.json',
+    'application/json', 256, repeat('bb', 32),
+    'arena-contract',
+    jsonb_build_object(
+      'schema', 'twofold.deterministic_baseline_policy/v1',
+      'policyId', 'hold-genesis'
+    )
+  )).artifact_kind,
+  'deterministic_baseline_policy',
+  'the frozen policy stands in for the Agent Bundle manifest, under its own kind'
+);
+
+create or replace function pg_temp.open_baseline_invocation(
+  p_idempotency_key text,
+  p_decision_id uuid,
+  p_root_session_id text,
+  p_packet_key text
+)
+returns public.decision_invocation
+language sql
+volatile
+set search_path = public, extensions, pg_temp
+as $$
+  select public.open_decision_invocation(
+    p_idempotency_key,
+    p_decision_id,
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002',
+    0,
+    p_root_session_id,
+    'hold-genesis',
+    (select artifact_id from public.artifact_metadata
+      where idempotency_key = p_packet_key),
+    (select artifact_id from public.artifact_metadata
+      where idempotency_key = 'arena:baseline:policy'),
+    (select snapshot_id from public.market_snapshot
+      where idempotency_key = 'arena:snapshot'),
+    (select decision_at from arena_contract_context),
+    '2026-08-23T00:10:00Z',
+    (select deadline_at from arena_contract_context),
+    array['deterministic_baseline'],
+    (select opened_at from arena_contract_context),
+    'arena-contract'
+  )
+$$;
+
+select is(
+  (pg_temp.open_baseline_invocation(
+    'arena:baseline:open',
+    '51000000-0000-4000-8000-000000000003',
+    'baseline:hold-genesis:51000000-0000-4000-8000-000000000004',
+    'arena:baseline:packet'
+  )).decision_kind,
+  'DETERMINISTIC_BASELINE',
+  'the decision kind is derived from immutable entrant identity, not the caller'
+);
+
+-- Same run and Season as the baseline, differing only in artifact kind and
+-- packet schema, so the rejection isolates the kind branch rather than the
+-- run/Season scope checks that surround it.
+select is(
+  (public.register_artifact(
+    'arena:baseline:agent-kind-packet',
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002',
+    null,
+    'decision_packet',
+    'twofold-private-artifacts',
+    'packets/' || repeat('bc', 32) || '.json',
+    'application/json', 512, repeat('bc', 32),
+    'arena-contract',
+    jsonb_build_object(
+      'schema', 'twofold.decision_packet/v1',
+      'decisionId', '51000000-0000-4000-8000-000000000005',
+      'marketSnapshotId', (
+        select snapshot_id::text from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      ),
+      'marketManifestSha256', (
+        select manifest_sha256 from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      )
+    )
+  )).artifact_kind,
+  'decision_packet',
+  'an Agent-kind packet exists inside the baseline run and Season scope'
+);
+
+select throws_ok(
+  $q$select pg_temp.open_baseline_invocation(
+    'arena:baseline:open-agent-packet',
+    '51000000-0000-4000-8000-000000000005',
+    'baseline:hold-genesis:51000000-0000-4000-8000-000000000006',
+    'arena:baseline:agent-kind-packet'
+  )$q$,
+  '22023',
+  'decision packet artifact does not match invocation scope or market snapshot',
+  'a baseline run cannot open a decision on an Agent decision packet'
+);
+
+select throws_ok(
+  $q$insert into public.model_usage_record (
+    idempotency_key, run_id, season_id, decision_id, harness_session_id,
+    turn_index, step_index, attempt_index, provider, model,
+    request_started_at, completed_at, usage_status, usage_source
+  ) values (
+    'arena:baseline:usage',
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002',
+    '51000000-0000-4000-8000-000000000003',
+    'baseline:hold-genesis:51000000-0000-4000-8000-000000000004',
+    0, 0, 0, 'deepseek-official', 'deepseek-v4-pro',
+    '2026-08-23T00:11:00Z', '2026-08-23T00:11:05Z',
+    'captured', 'assistant_message'
+  )$q$,
+  '23514',
+  'a deterministic baseline decision cannot record model usage',
+  'a model-free entrant can never be billed a provider request'
 );
 
 select * from finish();

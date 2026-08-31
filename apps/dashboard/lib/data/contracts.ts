@@ -162,7 +162,7 @@ export interface PrivateArenaEntrantOverview {
   presetId: string;
   provider: string;
   model: string;
-  executionClass: "ROOT_ONLY" | "ORCHESTRATED";
+  executionClass: "ROOT_ONLY" | "ORCHESTRATED" | "DETERMINISTIC_BASELINE";
   roundEntryId: string | null;
   decisionId: string | null;
   noTrade: PrivateArenaNoTradeOverview | null;

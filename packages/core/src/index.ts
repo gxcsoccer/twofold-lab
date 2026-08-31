@@ -8,6 +8,7 @@ export * from "./decimal.js";
 export * from "./decision-cycle.js";
 export * from "./decision-evidence.js";
 export * from "./decision-evolution.js";
+export * from "./deterministic-baseline.js";
 export * from "./events.js";
 export * from "./execution-liquidity.js";
 export * from "./evolution.js";
