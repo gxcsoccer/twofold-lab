@@ -51,3 +51,19 @@ describe("US Liquid 100 activation planning", () => {
     })).toThrow(/member set/);
   });
 });
+
+describe("snapshot member fence", () => {
+  it("still rejects an unwidened snapshot with a wrong member", () => {
+    expect(() => planUsLiquid100Activation({
+      artifact,
+      snapshot: {
+        snapshotId: "e502936c-1c97-49d5-9351-deb16721cb5b",
+        targetSessionDate: "2026-08-28",
+        sealedAt: "2026-08-29T20:05:37.11948+00:00",
+        symbols: [...symbols.slice(1), "NOPE"],
+      },
+      now: "2026-08-29T20:20:00.000Z",
+      activationDelayMinutes: 10,
+    })).toThrow(/frozen member set/);
+  });
+});

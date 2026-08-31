@@ -236,7 +236,7 @@ async function verifyExistingArtifact(
   }
 }
 
-async function uploadArtifact(
+export async function uploadArtifact(
   client: SupabaseClient,
   material: ArenaArtifactMaterial,
 ): Promise<void> {

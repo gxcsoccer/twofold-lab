@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  executeBaselineDecision,
+  loadBaselineCompetitionSeat,
+} from "./arena-baseline-runner.js";
 import { buildArenaInputs, type ArenaCompetitionIdentity } from "./arena-inputs.js";
 import { SupabaseArenaRepository } from "./arena-repository.js";
 import { createArenaRuntime } from "./arena-runtime.js";
@@ -169,6 +173,38 @@ export function createRealArenaAgentDecisionExecution(input: {
       ...(input.harnessRoot === undefined ? {} : { harnessRoot: input.harnessRoot }),
     });
   return async (item, signal) => {
+    // A deterministic baseline shares the decision phase but not the execution
+    // path, so it is dispatched before the credential check and never reads the
+    // provider key. Note this does NOT make the Worker credential-free:
+    // arenaAgentHandlers below still advertises RUN_AGENT_DECISION only when a
+    // key is present, so a keyless Worker claims no decision work at all. That
+    // is acceptable while baselines share a Round with Agent entrants - such a
+    // Round needs the key regardless - but a baseline-only Season would need
+    // its own work phase before it could run without one.
+    const baselineSeat = await loadBaselineCompetitionSeat(
+      repositoryRoot,
+      environment.TWOFOLD_COMPETITION_CONFIG
+        ?? "config/private-controlled-lab-s1.json",
+      item,
+    );
+    if (baselineSeat !== null) {
+      const baseline = await executeBaselineDecision({
+        worker: input.worker,
+        seat: baselineSeat,
+        item,
+      });
+      return Object.freeze({
+        decisionId: baseline.decisionId,
+        status: "SUCCEEDED" as const,
+        acceptedSubmissionId: baseline.acceptedSubmissionId,
+        agentCount: "0",
+        providerDispatchAttempts: "0",
+        totalBillableTokens: "0",
+        estimatedCostUsd: "0",
+        costStatus: "ESTIMATED",
+      });
+    }
+
     const key = environment.DEEPSEEK_API_KEY;
     if (key === undefined || key.trim() === "") {
       throw new Error("DEEPSEEK_API_KEY is required for real Agent execution");

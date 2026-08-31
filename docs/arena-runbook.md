@@ -35,6 +35,67 @@ current operational health (the intended Worker is live,
 the active Season matches, and there are no alerts). A healthy cron alone is
 not proof that a Round is structurally complete.
 
+## Registering a deterministic baseline
+
+A baseline is a ranked contestant that runs no model. It cannot be added to a
+live Season: `season_entrant` is immutable, so a baseline joins at the next
+Season activation alongside the Agent entrants.
+
+The `entrants` array is hand-authored (only the season/round/universe blocks
+come from `pnpm season:prepare:liquid100`). Add one entry per baseline, using
+fresh `entrantId`/`runId` UUIDs and the frozen policy's content address as
+`bundleSha256`:
+
+```json
+{
+  "entrantId": "<fresh uuid>",
+  "entrantCode": "baseline-hold-lulu",
+  "runId": "<fresh uuid>",
+  "bundleId": "twofold-baseline-hold-genesis@1.0.0",
+  "bundleSha256": "14a7e54b2244e417e48b653a27742ce41038855a306e8b4ad2ff1da7b6016b39",
+  "presetId": "none",
+  "provider": "none",
+  "model": "none",
+  "executionClass": "DETERMINISTIC_BASELINE",
+  "track": "MAIN_ARENA",
+  "baselinePolicy": {
+    "policyId": "hold-genesis",
+    "rule": "HOLD_GENESIS",
+    "symbol": null
+  }
+}
+```
+
+`bundleSha256` must equal the SHA-256 of the canonical policy bytes. The seat
+loader recomputes it on every claim, so a `baselinePolicy` edited after
+registration fails closed rather than competing under a strategy that differs
+from the one on record. Recompute it for a new policy with:
+
+```bash
+node -e "const{createHash}=require('crypto');const d={policyId:'all-in-spy',rule:'ALL_IN_SYMBOL',schema:'twofold.deterministic_baseline_policy/v1',symbol:'SPY'};const j=JSON.stringify(d);console.log(createHash('sha256').update(j,'utf8').digest('hex'))"
+```
+
+`provider` and `model` must both be the literal `none`: the database binds that
+sentinel to `DETERMINISTIC_BASELINE` by equivalence, so a baseline naming a real
+route and an Agent hiding behind the sentinel are both rejected at registration.
+
+Then follow the ordinary sequence - `season:register`, `season:genesis`,
+`round:register`, `round:entries`, `round:work`, `round:value:opening`. Each
+baseline receives the same equal-start genesis account and the same eight-phase
+DAG as an Agent entrant, and `round:readiness` counts it like any other seat.
+
+Two operational limits:
+
+- `ALL_IN_SYMBOL` works only for an instrument already inside the decision
+  universe, e.g. a Liquid 100 member such as `NVDA`. An instrument outside it -
+  SPY and QQQ are ETFs the builder excludes - is not supported: sealing the
+  extra symbol into the snapshot is not sufficient and would fail
+  `PREPARE_S1_ORDERS` for every entrant in the Round. See the known constraints
+  in architecture.md.
+- The Worker still advertises `RUN_AGENT_DECISION` only when `DEEPSEEK_API_KEY`
+  is set, so a baseline is claimed only by a keyed Worker. That is satisfied
+  whenever baselines share a Round with Agent entrants.
+
 ## Worker operation
 
 One diagnostic lease cycle:

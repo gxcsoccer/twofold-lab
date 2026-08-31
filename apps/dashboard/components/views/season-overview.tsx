@@ -83,7 +83,11 @@ function returnPct(entrant: PrivateArenaEntrantOverview): string | null {
     : new Decimal(entrant.valuation.returnMultiple).minus(1).times(100).toString();
 }
 
+// A baseline is ranked beside the Agent entrants but is not one of them: it runs
+// no model and is exempt from the decision policy every Agent must satisfy, so
+// the label has to keep the two readable apart at a glance.
 function executionLabel(entrant: PrivateArenaEntrantOverview): string {
+  if (entrant.executionClass === "DETERMINISTIC_BASELINE") return "确定性基线";
   return entrant.executionClass === "ORCHESTRATED" ? "编排 Agent" : "单 Agent";
 }
 

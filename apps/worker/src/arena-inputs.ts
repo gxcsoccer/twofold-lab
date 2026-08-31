@@ -367,7 +367,17 @@ export async function buildArenaInputs(input: {
         }
       : packetPortfolioState(input.portfolioState),
     constraints: {
-      eligible_symbols: [...input.snapshot.symbols],
+      // Sourced from the frozen universe rather than the snapshot. The two are
+      // identical today because the snapshot fence above requires it; naming the
+      // universe states the intent. Note this list is advisory to the model: the
+      // durable guard in accept_portfolio_targets checks the snapshot, so it is
+      // the snapshot fence - not this field - that keeps ineligible instruments
+      // untradeable.
+      eligible_symbols: input.decisionUniverse === undefined
+        ? [...input.snapshot.symbols]
+        : input.decisionUniverse.artifact.members
+            .map((member) => member.symbol)
+            .sort(),
       target_weight_total_bps: "10000",
       allow_cash: true,
       live_trading: false,

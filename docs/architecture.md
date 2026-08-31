@@ -245,6 +245,45 @@ and no inherited host/Worker secrets. In-process loading is reserved for
 audited, trusted host code. This isolation layer is target architecture and is
 not implemented in the current worker.
 
+## Deterministic baselines
+
+A ranked entrant does not have to be an Agent. A deterministic baseline holds a
+single instrument under a frozen `twofold.deterministic_baseline_policy/v1`
+document and competes on the same leaderboard, so the Season shows what the
+Agent entrants actually had to beat. `HOLD_GENESIS` never trades and measures
+doing nothing; `ALL_IN_SYMBOL` performs one switch and then holds, paying the
+real S1 disposition fees and CNY tax reserve on the way.
+
+The baseline reuses the entire accepted-target -> S1/S2 -> ledger -> NAV path
+unchanged, because everything downstream keys off `decision_id`. Only entrant
+identity and decision provenance learn about the new kind:
+
+- `season_entrant.execution_class` gains `DETERMINISTIC_BASELINE`, and an
+  equivalence constraint binds that class to a `provider`/`model` of `none`.
+  The sentinel is unforgeable in both directions.
+- `bundle_sha256` keeps its meaning: for a baseline it is the SHA-256 of the
+  frozen policy bytes, so the existing immutable entrant-identity fence already
+  prevents redefining a baseline mid-Season.
+- `decision_invocation.decision_kind` is derived by trigger from the entrant's
+  immutable execution class rather than trusted from the caller, and a check
+  constraint binds it to the `baseline:` root execution identity.
+- A `DETERMINISTIC_BASELINE` decision may record no `model_usage_record` row at
+  all. The zero-token property is a database invariant, not a convention.
+
+A baseline is exempt from the decision-packet portfolio policy that every Agent
+must satisfy, because a full-weight single-instrument allocation is the point of
+the baseline rather than a policy violation. The Dashboard therefore labels it
+distinctly so a baseline result is never read as an Agent that beat the
+constraints.
+
+The baseline carries its own invocation identity and a thin persistence path
+rather than widening `ArenaInvocationIdentity`. That Agent type pins a trusted
+preset, an execution class, and a locked provider/model route; widening it would
+make one type mean two different things on the code path that runs the real
+contestants. The Harness runtime guard still rejects a baseline identity
+outright, so a baseline reaching the model path fails loudly instead of
+degrading silently.
+
 ## Control plane
 
 The dashboard never mutates a Run, order, fill, or NAV row directly. It appends a version-checked command intent. The worker claims the command and emits authoritative events.
@@ -339,7 +378,10 @@ The DeepSeek API key is stored only in the Harness credential store or the worke
 
 - DeepSeek Harness is a developer preview. The exact version and commit are pinned and upgrades require a compatibility change.
 - `deepseek-v4-pro` is a provider alias. The manifest records the alias, request timestamp, and provider request id; it cannot claim immutable model weights.
-- One model across three Skill conditions plus four non-AI baselines is a useful MVP, but it does not yet satisfy the specification's two-model Definition of Done.
+- One model across three Skill conditions plus four non-AI baselines is a useful MVP, but it does not yet satisfy the specification's two-model Definition of Done. The deterministic-baseline mechanism and Worker dispatch exist and `HOLD_GENESIS` is usable, but no Season declares a `DETERMINISTIC_BASELINE` seat yet, so it has not executed a real Round.
+- `ALL_IN_SYMBOL` is not usable on an instrument outside the decision universe. Sealing SPY or QQQ into the snapshot alone is not enough: `get_arena_cycle_material` requires the resolved instrument universe to have exactly the snapshot's cardinality, and instruments are registered only from the Season config universe, so an unregistered extra symbol fails `PREPARE_S1_ORDERS` for every entrant in the Round. `eligible_symbols` is also advisory - the durable guard in `accept_portfolio_targets` checks the snapshot, so widening the snapshot would additionally make the excluded ETFs genuinely tradeable by Agents. Supporting it needs instrument registration plus a durable eligibility guard bound to the decision universe, not a relaxed activation check.
+- A baseline decision writes no `dashboard.arena_decision` projection, so the Season view's per-entrant decision link resolves to the not-ready state for a baseline seat.
+- Season registration for a baseline family is still manual: the `entrants` array is hand-authored, and no Season yet declares a `DETERMINISTIC_BASELINE` seat.
 - A general Arena Bundle loader and untrusted Bundle isolation remain
   unimplemented; the current execution path is restricted to the audited host
   `twofold-orchestrator` Bundle.
