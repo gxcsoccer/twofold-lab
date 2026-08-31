@@ -216,7 +216,34 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
    anomaly in one instrument; in fact every symbol returned two bars and AAOI was
    merely the alphabetically first Liquid 100 member checked. Reporting the
    observed count and timestamps would have pointed at the window immediately.
-7. Extend audited recovery deliberately, not reactively. Migration
+7. Evaluate splitting `SETTLE_S1_AND_PREPARE_S2`, but only after Round 1 has
+   run to completion. The phase bundles two steps with different data needs.
+   Settling S1 requires the first-minute open reference and the ECB USD/CNY
+   cross for the CNY disposition reserve; ECB publishes around 14:15 UTC, so
+   that half could complete roughly six hours before it does today. Only the S2
+   buy plan genuinely needs the session close, because it sizes against the
+   post-S1 investable balance. `CAPTURE_S1_CLOSE` currently captures the close
+   snapshot and the tax-FX reference together, which is what couples them.
+
+   The benefit is detection latency rather than throughput: the 2026-08-31
+   incident was only diagnosable once the phase came due, so settling S1 in the
+   early afternoon would surface a settlement-side defect with most of a day of
+   retry runway instead of a few hours.
+
+   Three things must be settled first, none of them verified yet: whether early
+   settlement can race the Season-bounded corporate-action gates when an ex-date
+   falls inside the session; whether the stage gating in `arena_cycle_material`
+   tolerates a "S1 settled, S2 unplanned" intermediate state, since the two
+   currently commit together; and the change surface, since an eight-phase DAG
+   would become ten, touching `seed_arena_round_work`, the readiness gate's
+   exact-phase and `entrants * 8` checks, the claim whitelist, and their pgTAP
+   contracts.
+
+   Do not attempt this before Round 1 completes. Every phase after the decision
+   is executing in production for the first time, and restructuring the DAG on
+   paths that have never been observed working would confound a first-run defect
+   with a refactor.
+8. Extend audited recovery deliberately, not reactively. Migration
    `202608310008` had to widen `recover_failed_arena_work_item` mid-incident
    because its accepted-submission fence made the four shared market-capture
    phases unrecoverable for any Round that had reached S1 - which is every Round
