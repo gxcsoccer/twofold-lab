@@ -437,6 +437,17 @@ h3 {
   background: var(--oxide);
 }
 
+/* An ordinary terminal failure is in the same family as a breach but is not
+   one: same hue, hollow instead of filled. */
+.spine-node-failed {
+  color: var(--bone);
+}
+
+.spine-node-failed i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--oxide);
+}
+
 .spine-dash {
   flex: 0 1 34px;
   min-width: 10px;
@@ -467,6 +478,15 @@ h3 {
   font-family: var(--font-data);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
+}
+
+/* the stage has outlived its own frozen boundary */
+.spine-next-overdue {
+  color: var(--oxide-lift);
+}
+
+.spine-next-overdue strong {
+  color: var(--oxide-lift);
 }
 
 .spine-note {
@@ -1201,6 +1221,15 @@ h3 {
   text-align: right;
 }
 
+/* canceled work is reported beside the count, not folded into it */
+.phase-count strong {
+  display: block;
+  color: var(--bone-faint);
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
 /* ── metrics grid (kept for run detail / decision pages) ───────────────── */
 .metrics-grid {
   display: grid;
@@ -1441,27 +1470,6 @@ td:last-child {
   padding-block: 32px;
   color: var(--bone-dim);
   text-align: center;
-}
-
-/* the audit chain: two adjacent rows should read head-to-tail */
-.chain {
-  display: grid;
-  gap: 2px;
-  font-family: var(--font-data);
-  font-size: 10px;
-}
-
-.chain strong {
-  color: var(--bone-dim);
-  font-weight: 400;
-}
-
-.chain span {
-  color: var(--bone-faint);
-}
-
-.chain span::before {
-  content: "↳ prev ";
 }
 
 /* official → candidate comparison (self-evolution) */

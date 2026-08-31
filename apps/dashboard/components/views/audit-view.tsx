@@ -127,7 +127,9 @@ export function AuditView({ initialData }: { initialData: AuditData }) {
             detail={
               data.chainStatus === "VERIFIED"
                 ? `${formatInteger(data.eventCount)} 条按序解析，无断点`
-                : "链路未通过顺序校验"
+                : data.chainStatus === "EMPTY"
+                  ? "尚无事件可校验"
+                  : "链路未通过顺序校验"
             }
             text
           />
@@ -191,11 +193,7 @@ export function AuditView({ initialData }: { initialData: AuditData }) {
               </tr>
             </thead>
             <tbody>
-              {filteredEvents.map((event, index) => {
-                // The chain is checkable by eye: this row's `prev` is the next
-                // row's hash, because the table runs newest-first.
-                const previous = filteredEvents[index + 1];
-                return (
+              {filteredEvents.map((event) => (
                   <tr key={event.id}>
                     <td className="audit-time">
                       <time dateTime={event.occurredAt}>{formatDateTime(event.occurredAt)}</time>
@@ -217,19 +215,15 @@ export function AuditView({ initialData }: { initialData: AuditData }) {
                         tone={auditTone(event.status)}
                       />
                     </td>
-                    <td>
-                      <div className="chain">
-                        <strong>{event.chainHash}</strong>
-                        {previous ? <span>{previous.chainHash}</span> : null}
-                      </div>
-                    </td>
+                    <td className="mono">{event.chainHash}</td>
                   </tr>
-                );
-              })}
+              ))}
               {filteredEvents.length === 0 ? (
                 <tr>
                   <td className="no-results" colSpan={6}>
-                    没有符合当前筛选条件的事件。清空搜索框或改回“全部状态”。
+                    {data.events.length === 0
+                      ? "事件流为空。事件在 Worker 写入后出现，控制台不会补写历史。"
+                      : "没有符合当前筛选条件的事件。清空搜索框或改回“全部状态”。"}
                   </td>
                 </tr>
               ) : null}
@@ -237,7 +231,7 @@ export function AuditView({ initialData }: { initialData: AuditData }) {
           </table>
         </div>
         <div className="panel-footer">
-          <span>每行第二个哈希是上一条事件的链哈希；相邻两行应当首尾相接</span>
+          <span>链哈希按事件记录；顺序校验在服务端对完整账本执行，不由本页相邻行推断</span>
           <StatusBadge
             label={chainStatusLabel(data.chainStatus)}
             tone={chainTone(data.chainStatus)}

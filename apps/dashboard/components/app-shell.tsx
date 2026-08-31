@@ -1,21 +1,10 @@
-"use client";
-
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Suspense } from "react";
 
-import { useRealtimeRefresh } from "@/lib/supabase/realtime";
-
-const navigation = [
-  { href: "/", label: "赛季概览", exact: true },
-  { href: "/data", label: "真实数据", exact: false },
-  { href: "/audit", label: "审计", exact: false },
-  { href: "/evolution", label: "自进化", exact: false },
-  { href: "/settings", label: "设置", exact: false },
-];
-
-function isActive(pathname: string, href: string, exact: boolean): boolean {
-  return exact ? pathname === href : pathname.startsWith(href.split("/").slice(0, 2).join("/"));
-}
+import { EnvironmentStatus } from "@/components/environment-status";
+import { PrimaryNav } from "@/components/primary-nav";
+import { ReadinessBadge } from "@/components/readiness-badge";
+import { RoundSpine } from "@/components/round-spine";
 
 /** Two folds and a fence: the seal this console keeps. */
 function Mark() {
@@ -37,38 +26,22 @@ function Mark() {
   );
 }
 
+/**
+ * The console chrome.
+ *
+ * This is a Server Component so that the two parts which read projections — the
+ * round spine and the readiness count — can be composed here directly instead
+ * of being handed to a Client Component as element props. Only the two pieces
+ * that genuinely need browser state are client: the realtime indicator and the
+ * nav, which needs the current path.
+ */
 export function AppShell({
   children,
-  spine,
   serverDataConfigured,
-  readiness,
 }: {
   children: React.ReactNode;
-  spine: React.ReactNode;
   serverDataConfigured: boolean;
-  readiness: { ready: number; total: number } | null;
 }) {
-  const pathname = usePathname();
-  const realtimeStatus = useRealtimeRefresh(true);
-  const environmentLabel = realtimeStatus === "live"
-      ? "实时 · Supabase"
-      : realtimeStatus === "connecting"
-        ? "正在连接 · Supabase"
-        : realtimeStatus === "unauthenticated"
-          ? serverDataConfigured
-            ? "真实投影 · 手动刷新"
-            : "需要登录 Supabase"
-        : realtimeStatus === "degraded"
-          ? "实时连接异常"
-          : serverDataConfigured
-            ? "真实数据 · 服务端 Supabase"
-            : "需要完成真实数据设置";
-  const statusDotClass = realtimeStatus === "live"
-      ? "status-dot status-dot-live"
-      : realtimeStatus === "degraded"
-        ? "status-dot status-dot-degraded"
-        : "status-dot";
-
   return (
     <>
       <a className="skip-link" href="#main-content">
@@ -82,42 +55,17 @@ export function AppShell({
         </Link>
         <p className="masthead-sub">税后模拟交易研究 · 只读控制台</p>
         <div className="masthead-meta">
-          <span className="environment-status" aria-live="polite">
-            <span className={statusDotClass} />
-            <span>{environmentLabel}</span>
-          </span>
-          {readiness ? (
-            <Link
-              className="readiness"
-              href="/settings"
-              title="正式输入就绪进度"
-            >
-              <strong>{readiness.ready} / {readiness.total}</strong>
-              <span>正式输入就绪</span>
-            </Link>
-          ) : null}
+          <EnvironmentStatus serverDataConfigured={serverDataConfigured} />
+          <Suspense fallback={null}>
+            <ReadinessBadge />
+          </Suspense>
         </div>
       </header>
 
       <div className="app-frame">
         <aside className="sidebar">
           <p className="rail-label">Console</p>
-          <nav className="primary-nav" aria-label="主导航">
-            {navigation.map((item) => {
-              const active = isActive(pathname, item.href, item.exact);
-              return (
-                <Link
-                  key={item.href}
-                  className={active ? "nav-link nav-link-active" : "nav-link"}
-                  href={item.href}
-                  aria-current={active ? "page" : undefined}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-
+          <PrimaryNav />
           <div className="sidebar-footnote">
             <span>研究环境</span>
             <p>不下实盘订单，不保存券商凭证，不在浏览器持有任何密钥。</p>
@@ -125,7 +73,11 @@ export function AppShell({
         </aside>
 
         <div className="app-body">
-          {spine}
+          {serverDataConfigured ? (
+            <Suspense fallback={<div className="spine spine-loading" />}>
+              <RoundSpine />
+            </Suspense>
+          ) : null}
           <main id="main-content" className="main-content">
             {children}
           </main>

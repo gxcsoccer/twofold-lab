@@ -175,7 +175,7 @@ export function SettingsView({ initialData }: { initialData: SettingsData }) {
 
           <section className="panel settings-section">
             <SectionHeading
-              eyebrow="Execution &amp; valuation"
+              eyebrow="Execution & valuation"
               title="已冻结的规则集输入"
               compact
             />
@@ -233,7 +233,7 @@ export function SettingsView({ initialData }: { initialData: SettingsData }) {
 
           <section className="panel settings-section">
             <SectionHeading
-              eyebrow="Model &amp; skills"
+              eyebrow="Model & skills"
               title="Harness 运行时边界"
               note={<StatusBadge label="由工作进程管理" tone="neutral" />}
               compact

@@ -186,7 +186,7 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
                 <table>
                   <thead>
                     <tr>
-                      <th scope="col">Delivery</th>
+                      <th scope="col">Delivery / request ID</th>
                       <th scope="col">响应 SHA-256</th>
                       <th scope="col">归档路径</th>
                       <th scope="col" className="numeric">字节</th>
@@ -196,7 +196,19 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
                   <tbody>
                     {data.deliveries.map((delivery) => (
                       <tr key={delivery.deliveryId}>
-                        <td className="mono">{shortHash(delivery.deliveryId)}</td>
+                        <td>
+                          <div className="run-name">
+                            <strong className="mono">{shortHash(delivery.deliveryId)}</strong>
+                            {delivery.providerRequestId === null
+                              ? (
+                                  <Unsealed
+                                    label="Provider 未返回"
+                                    reason="REQUEST_ID_MISSING"
+                                  />
+                                )
+                              : <span>request {delivery.providerRequestId}</span>}
+                          </div>
+                        </td>
                         <td className="mono">{shortHash(delivery.responseSha256)}</td>
                         <td className="mono">
                           {delivery.storageBucket}/{delivery.objectPath}
@@ -216,10 +228,7 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
               </div>
               <div className="panel-footer">
                 <span>
-                  Provider request ID 由响应头带回；
-                  {data.deliveries.some((delivery) => delivery.providerRequestId === null)
-                    ? "本批中有响应未返回该 ID，已如实标注。"
-                    : "本批全部返回。"}
+                  Provider request ID 由响应头带回；缺失的以未封存标记如实呈现，不推断补全。
                 </span>
               </div>
             </section>

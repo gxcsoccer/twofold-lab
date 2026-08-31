@@ -133,7 +133,14 @@ function buildAxis(
   });
 }
 
-/** Maps an instant onto the axis. Returns null when it lies outside the round. */
+/**
+ * Maps an instant onto the axis.
+ *
+ * Instants before the round clamp to 0 and instants after it clamp to 100, so a
+ * value outside the window is pinned to the nearest edge rather than dropped.
+ * null means the instant could not be placed at all: an unparseable timestamp,
+ * or an axis whose own anchors are unreadable.
+ */
 function positionOf(axis: readonly AxisSegment[], iso: string): number | null {
   const at = parse(iso);
   if (at === null) return null;

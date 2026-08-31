@@ -7,7 +7,14 @@ function nodeClass(state: SpineNodeState): string {
   if (state === "sealed") return "spine-node";
   if (state === "current") return "spine-node spine-node-current";
   if (state === "breached") return "spine-node spine-node-breached";
+  if (state === "failed") return "spine-node spine-node-failed";
   return "spine-node spine-node-upcoming";
+}
+
+function nodeTitle(state: SpineNodeState): string | undefined {
+  if (state === "breached") return "已越界：越过冻结截止线";
+  if (state === "failed") return "执行失败（非截止线越界）";
+  return undefined;
 }
 
 /**
@@ -52,7 +59,7 @@ export async function RoundSpine() {
         {spine.nodes.map((node, index) => (
           <span className="spine-node-group" key={node.id}>
             {index > 0 ? <span className="spine-dash" /> : null}
-            <span className={nodeClass(node.state)}>
+            <span className={nodeClass(node.state)} title={nodeTitle(node.state)}>
               <i />
               {node.label}
             </span>
@@ -60,13 +67,19 @@ export async function RoundSpine() {
         ))}
       </div>
       <span className="spine-now">NOW {formatClock(spine.asOf)}</span>
-      {spine.boundaryLabel && spine.boundaryAt ? (
-        <span className="spine-next">
-          下一时点 {spine.boundaryLabel}{" "}
-          <strong>{formatDateTime(spine.boundaryAt)}</strong>
+      {spine.boundary === null ? (
+        <span className="spine-next">本轮已无待等待时点</span>
+      ) : spine.boundary.overdue ? (
+        // A frozen instant that has already passed is never called "next".
+        <span className="spine-next spine-next-overdue">
+          等待 {spine.boundary.label} · 冻结时点{" "}
+          <strong>{formatDateTime(spine.boundary.at)}</strong> 已过
         </span>
       ) : (
-        <span className="spine-next">本轮已无待等待时点</span>
+        <span className="spine-next">
+          下一时点 {spine.boundary.label}{" "}
+          <strong>{formatDateTime(spine.boundary.at)}</strong>
+        </span>
       )}
     </div>
   );

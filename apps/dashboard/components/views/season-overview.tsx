@@ -7,7 +7,6 @@ import { SealedTimelinePlot } from "@/components/sealed-timeline";
 import {
   ConnectionNote,
   PageHeader,
-  Readout,
   ReadoutCell,
   SectionHeading,
   SetupRequired,
@@ -24,7 +23,11 @@ import type {
   StatusTone,
 } from "@/lib/data/contracts";
 import { PRIVATE_ARENA_PHASES } from "@/lib/data/private-arena-overview";
-import { isDeadlineBreach, nextRoundBoundary } from "@/lib/data/round-spine";
+import {
+  derivePhaseState,
+  isDeadlineBreach,
+  nextRoundBoundary,
+} from "@/lib/data/round-spine";
 import { buildSealedTimeline } from "@/lib/data/sealed-timeline";
 import {
   formatClock,
@@ -128,48 +131,6 @@ function noTradeReasonLabel(entrant: PrivateArenaEntrantOverview): string | null
   return null;
 }
 
-function phaseState(
-  entrants: readonly PrivateArenaEntrantOverview[],
-  phase: PrivateArenaWorkPhase,
-): {
-  label: string;
-  succeeded: number;
-  total: number;
-  tone: StatusTone;
-  scheduledAt: string | null;
-  deadlineAt: string | null;
-  canceled: number;
-} {
-  const items = entrants.flatMap((entrant) =>
-    entrant.work.filter((item) => item.phase === phase)
-  );
-  const scheduledAt = items[0]?.scheduledAt ?? null;
-  const deadlineAt = items[0]?.deadlineAt ?? null;
-  const succeeded = items.filter((item) => item.status === "SUCCEEDED").length;
-  const canceled = items.filter((item) => item.status === "CANCELED").length;
-  const base = { succeeded, total: items.length, scheduledAt, deadlineAt, canceled };
-
-  if (items.length === 0) {
-    return { ...base, label: "尚未排程", tone: "neutral" };
-  }
-  if (items.some(isDeadlineBreach)) {
-    return { ...base, label: "已越界", tone: "critical" };
-  }
-  if (items.some((item) => item.status === "FAILED")) {
-    return { ...base, label: "需要处理", tone: "critical" };
-  }
-  if (succeeded === items.length) {
-    return { ...base, label: "已封存", tone: "positive" };
-  }
-  if (items.some((item) => item.status === "CLAIMED")) {
-    return { ...base, label: "执行中", tone: "warning" };
-  }
-  if (succeeded + canceled === items.length && succeeded > 0) {
-    return { ...base, label: "已封存", tone: "positive" };
-  }
-  return { ...base, label: "等待时点", tone: "neutral" };
-}
-
 function valuationStageLabel(
   stage: NonNullable<PrivateArenaEntrantOverview["valuation"]>["stage"],
 ): string {
@@ -207,7 +168,7 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
   const arena = data.overview;
   const seasonBadge = seasonStatus(arena.season.status);
   const round = arena.currentRound;
-  const boundary = round ? nextRoundBoundary(round) : null;
+  const boundary = round ? nextRoundBoundary(round, arena.asOf) : null;
   const ranked = arena.entrants.filter((entrant) => entrant.valuation !== null);
   const timeline = buildSealedTimeline(
     arena,
@@ -270,9 +231,19 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
             text
           />
           <ReadoutCell
-            label={boundary ? `下一时点 · ${boundary.label}` : "下一时点"}
+            label={
+              boundary === null
+                ? "下一时点"
+                : boundary.overdue
+                  ? `已逾期 · ${boundary.label}`
+                  : `下一时点 · ${boundary.label}`
+            }
             value={boundary ? formatDateTime(boundary.at) : "—"}
-            detail="按真实交易日推进；越过冻结截止线的工作只能记为失败"
+            detail={
+              boundary?.overdue
+                ? "该冻结时点已过，阶段仍未完成；越过冻结截止线的工作只能记为失败"
+                : "按真实交易日推进；越过冻结截止线的工作只能记为失败"
+            }
           />
         </div>
 
@@ -453,7 +424,7 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
             />
             <div className="phase-list">
               {PRIVATE_ARENA_PHASES.map((phase) => {
-                const state = phaseState(arena.entrants, phase);
+                const state = derivePhaseState(arena.entrants, phase);
                 return (
                   <div className="phase-row" key={phase}>
                     <i className={`phase-mark phase-mark-${state.tone}`} aria-hidden="true" />
@@ -469,14 +440,17 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
                     </p>
                     <StatusBadge label={state.label} tone={state.tone} />
                     <p className="phase-count">
-                      {state.succeeded} / {state.total}
+                      {state.succeeded} / {state.expected}
+                      {state.canceled > 0
+                        ? <strong>{state.canceled} 已取消</strong>
+                        : null}
                     </p>
                   </div>
                 );
               })}
             </div>
             <div className="panel-footer">
-              <span>计数为已封存的参赛者数量；已取消的工作不计入</span>
+              <span>分母为本轮仍需完成该阶段的参赛者；已取消的工作单独列出</span>
               <Link className="text-link" href="/audit">查看审计记录 →</Link>
             </div>
           </section>

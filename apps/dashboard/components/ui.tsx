@@ -115,32 +115,6 @@ export function SectionHeading({
   );
 }
 
-/** The readout strip: one bordered instrument rather than a row of cards. */
-export function Readout({
-  columns = 4,
-  last = true,
-  children,
-  label,
-}: {
-  columns?: 3 | 4 | 5;
-  last?: boolean;
-  children: React.ReactNode;
-  label: string;
-}) {
-  const variant = columns === 3
-    ? " ruler-readout-three"
-    : columns === 5
-      ? " ruler-readout-five"
-      : "";
-  return (
-    <section className="panel panel-flush" aria-label={label}>
-      <div className={`ruler-readout${variant}${last ? " ruler-readout-last" : ""}`}>
-        {children}
-      </div>
-    </section>
-  );
-}
-
 export function ReadoutCell({
   label,
   value,

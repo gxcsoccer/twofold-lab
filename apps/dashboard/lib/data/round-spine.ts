@@ -7,7 +7,18 @@ import type {
   StatusTone,
 } from "./contracts";
 
-export type SpineNodeState = "sealed" | "current" | "upcoming" | "breached";
+/**
+ * `breached` means a frozen deadline was crossed, which can never be retried
+ * into a success. `failed` is any other terminal failure — it needs attention
+ * too, but claiming a fence was breached when it was not misreports the one
+ * rule this console exists to enforce.
+ */
+export type SpineNodeState =
+  | "sealed"
+  | "current"
+  | "upcoming"
+  | "failed"
+  | "breached";
 
 export interface SpineNode {
   readonly id: "D" | "S1" | "S2" | "FINAL";
@@ -15,13 +26,21 @@ export interface SpineNode {
   readonly state: SpineNodeState;
 }
 
+export interface RoundBoundary {
+  readonly label: string;
+  readonly at: string;
+  /** The frozen time has already passed as of the projection's `asOf`, so the
+   *  phase is late rather than upcoming. */
+  readonly overdue: boolean;
+}
+
 export interface RoundSpineModel {
   readonly roundIndex: string;
   readonly nodes: readonly SpineNode[];
   readonly asOf: string;
-  readonly boundaryLabel: string | null;
-  readonly boundaryAt: string | null;
+  readonly boundary: RoundBoundary | null;
   readonly breachCount: number;
+  readonly failureCount: number;
 }
 
 /** Which market session each work phase belongs to. */
@@ -55,17 +74,57 @@ export function isDeadlineBreach(item: PrivateArenaWorkOverview): boolean {
     || item.errorCode === "DEADLINE_EXPIRED_DURING_EXECUTION";
 }
 
-export function workTone(item: PrivateArenaWorkOverview): StatusTone {
-  if (item.status === "SUCCEEDED") return "positive";
-  if (item.status === "FAILED") return "critical";
-  if (item.status === "CANCELED") return "neutral";
-  if (item.status === "CLAIMED") return "warning";
-  return "neutral";
+export interface PhaseState {
+  readonly label: string;
+  readonly succeeded: number;
+  /** Entrants still expected to complete this phase. Canceled work is not: once
+   *  an entrant is canceled into carry-forward it is no longer awaited. */
+  readonly expected: number;
+  readonly canceled: number;
+  readonly tone: StatusTone;
+  readonly scheduledAt: string | null;
+  readonly deadlineAt: string | null;
 }
 
-/** The next frozen boundary the operator is waiting on, or null when the
- *  round has nothing left to wait for. */
-export function nextRoundBoundary(
+/** Aggregates one phase across every entrant for the readable execution chain. */
+export function derivePhaseState(
+  entrants: readonly PrivateArenaEntrantOverview[],
+  phase: PrivateArenaWorkPhase,
+): PhaseState {
+  const items = entrants.flatMap((entrant) =>
+    entrant.work.filter((item) => item.phase === phase)
+  );
+  const succeeded = items.filter((item) => item.status === "SUCCEEDED").length;
+  const canceled = items.filter((item) => item.status === "CANCELED").length;
+  const base = {
+    succeeded,
+    expected: items.length - canceled,
+    canceled,
+    scheduledAt: items[0]?.scheduledAt ?? null,
+    deadlineAt: items[0]?.deadlineAt ?? null,
+  };
+
+  if (items.length === 0) return { ...base, label: "尚未排程", tone: "neutral" };
+  if (items.some(isDeadlineBreach)) return { ...base, label: "已越界", tone: "critical" };
+  if (items.some((item) => item.status === "FAILED")) {
+    return { ...base, label: "需要处理", tone: "critical" };
+  }
+  if (succeeded === items.length) return { ...base, label: "已封存", tone: "positive" };
+  if (items.some((item) => item.status === "CLAIMED")) {
+    return { ...base, label: "执行中", tone: "warning" };
+  }
+  // CANCELED is terminal. Once every item is either sealed or canceled there is
+  // nothing left to wait for, so an all-canceled phase must not read as
+  // scheduled.
+  if (succeeded + canceled === items.length) {
+    return succeeded > 0
+      ? { ...base, label: "已封存", tone: "positive" }
+      : { ...base, label: "已取消", tone: "neutral" };
+  }
+  return { ...base, label: "等待时点", tone: "neutral" };
+}
+
+function stageBoundary(
   round: NonNullable<PrivateArenaOverview["currentRound"]>,
 ): { readonly label: string; readonly at: string } | null {
   switch (round.stage) {
@@ -88,6 +147,29 @@ export function nextRoundBoundary(
   }
 }
 
+/**
+ * The frozen boundary this stage is bounded by, or null when the round has
+ * nothing left to wait for.
+ *
+ * A stage can outlive its own boundary: `FINALIZING` begins at `s2CloseAt` and
+ * persists until every S2 valuation is written, so a stalled finalization sits
+ * past `cycleReadyAt`. The same is true of any stage the Worker falls behind on.
+ * Rather than presenting a past instant as the "next" one, the boundary is
+ * returned with `overdue` set, and callers say it is late.
+ */
+export function nextRoundBoundary(
+  round: NonNullable<PrivateArenaOverview["currentRound"]>,
+  asOf: string,
+): RoundBoundary | null {
+  const boundary = stageBoundary(round);
+  if (boundary === null) return null;
+  const at = Date.parse(boundary.at);
+  const now = Date.parse(asOf);
+  // An unreadable timestamp is not evidence that the boundary has passed.
+  const overdue = Number.isFinite(at) && Number.isFinite(now) && now > at;
+  return { ...boundary, overdue };
+}
+
 function monthDay(sessionDate: string): string {
   return sessionDate.length === 10 ? sessionDate.slice(5) : sessionDate;
 }
@@ -98,7 +180,9 @@ function nodeState(
   isPast: boolean,
 ): SpineNodeState {
   if (items.some(isDeadlineBreach)) return "breached";
-  if (items.some((item) => item.status === "FAILED")) return "breached";
+  // An ordinary terminal failure (ARENA_PHASE_FAILED, WORKER_ABORTED, …) is not
+  // a crossed fence, and must not be painted as one.
+  if (items.some((item) => item.status === "FAILED")) return "failed";
   if (items.length > 0 && items.every((item) => item.status === "SUCCEEDED")) {
     return "sealed";
   }
@@ -112,6 +196,13 @@ function nodeState(
 
 function countBreaches(entrants: readonly PrivateArenaEntrantOverview[]): number {
   return entrants.filter((entrant) => entrant.work.some(isDeadlineBreach)).length;
+}
+
+/** Entrants with a terminal failure that was not a crossed fence. */
+function countFailures(entrants: readonly PrivateArenaEntrantOverview[]): number {
+  return entrants.filter((entrant) =>
+    entrant.work.some((item) => item.status === "FAILED" && !isDeadlineBreach(item))
+  ).length;
 }
 
 /** Derives the always-visible round tape. Returns null when there is no frozen
@@ -140,13 +231,12 @@ export function deriveRoundSpine(
     FINAL: "结算",
   };
 
-  const boundary = nextRoundBoundary(round);
   return {
     roundIndex: round.roundIndex,
     asOf: overview.asOf,
-    boundaryLabel: boundary?.label ?? null,
-    boundaryAt: boundary?.at ?? null,
+    boundary: nextRoundBoundary(round, overview.asOf),
     breachCount: countBreaches(overview.entrants),
+    failureCount: countFailures(overview.entrants),
     nodes: NODE_ORDER.map((id, index) => ({
       id,
       label: labels[id],
