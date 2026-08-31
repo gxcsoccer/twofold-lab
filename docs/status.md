@@ -267,7 +267,46 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
    Not useful before Round 1 completes: until S2 settles, every entrant still
    holds the identical genesis position, so a live value shows the same number
    for all of them.
-9. Extend audited recovery deliberately, not reactively. Migration
+9. Evaluate a v3 execution rulebook with limit-priced orders, as a Season-scoped
+   rulebook rather than a change to v2. Execution policy already belongs to the
+   immutable Season rulebook, so this has a natural home; v1 used fixed slippage
+   and v2 uses the shared first-minute VWAP with a volume participation cap.
+
+   The motivation is real. v2 is effectively a market-on-open order: on
+   2026-08-31 both entrants sold LULU into the first minute at `118.792354`
+   against a `120.81` basis and the symbol then traded up through `122`, so both
+   realized a loss on the disposition. A limit would have avoided that specific
+   outcome.
+
+   Three things make it a harder change than it looks, and none should be
+   glossed over:
+
+   - Market-on-open is unbiased across Rounds; limit orders are not. An order
+     fills when the price comes back to you and does not when the price runs
+     away, so a limit strategy systematically retains the positions that moved
+     against it. That is a different bias, not the absence of one, and it makes
+     an allocation comparison harder to read because a good result no longer
+     separates stock selection from non-execution.
+   - Touching a limit is not the same as being filled. Queue position and
+     hidden liquidity decide that, and a simulator asserting "price reached your
+     limit therefore you filled" is optimistic and unfalsifiable - precisely the
+     fabricated-liquidity and hidden-minimum-fill assumptions the accounting
+     kernel refuses elsewhere. v2's VWAP plus participation cap is defensible
+     because it claims less.
+   - The evidence cost is a step change. v2 seals one fact per symbol per day.
+     Simulating a limit needs the intraday path and the volume available at each
+     price, so roughly 390 minute bars per symbol per session - about 39,000
+     content-addressed facts a day for a 100-symbol universe instead of 100.
+
+   It also introduces partial completion: an unfilled limit leaves the portfolio
+   between its current state and its accepted target, while the S1/S2 cycle
+   currently assumes fills complete within their session. Carry-forward or
+   cancellation semantics would have to be defined before this is coherent.
+
+   Do not treat 2026-08-31 as evidence for it. One session of single-name timing
+   is noise, and the prior question - whether the Agents beat doing nothing at
+   all - is unanswerable until a deterministic baseline entrant exists.
+10. Extend audited recovery deliberately, not reactively. Migration
    `202608310008` had to widen `recover_failed_arena_work_item` mid-incident
    because its accepted-submission fence made the four shared market-capture
    phases unrecoverable for any Round that had reached S1 - which is every Round
