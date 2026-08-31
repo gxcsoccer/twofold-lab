@@ -56,11 +56,12 @@ export interface BaselineInvocationIdentity {
   readonly dataCutoffAt: string;
   readonly submissionDeadlineAt: string;
   /**
-   * One clock read shared by the admission evidence, the invocation open time,
-   * and the accepted-submission time. `accept_portfolio_targets_with_evidence`
-   * compares `observedAt` against `p_accepted_at` byte-for-byte, and
-   * `open_decision_invocation` rejects a differing `p_opened_at` on retry, so
-   * taking a second `now()` anywhere downstream would break both fences.
+   * The Round's frozen decision instant, shared by the admission evidence, the
+   * invocation open time, and the accepted-submission time.
+   * `accept_portfolio_targets_with_evidence` compares `observedAt` against
+   * `p_accepted_at` byte-for-byte and `open_decision_invocation` rejects a
+   * differing `p_opened_at` on retry, so this is deliberately not a clock read:
+   * a second `now()` on a retry would break both fences.
    */
   readonly observedAt: string;
   /**
@@ -88,7 +89,7 @@ export interface BuiltBaselineDecisionInputs {
  * restart replays the same decision instead of creating a second one.
  *
  * @param input - Frozen policy, immutable Round seat, sealed market snapshot,
- *   durable account state, and the observation time.
+ *   and durable account state.
  * @returns Content-addressed packet and policy artifacts plus ALLOW admission
  *   evidence bound to the same snapshot.
  */
@@ -99,9 +100,14 @@ export function buildBaselineDecisionInputs(input: {
   readonly snapshot: ArenaMarketSnapshot;
   readonly portfolioState: ArenaPortfolioState;
   readonly genesisSymbol: string;
-  readonly observedAt: string;
 }): BuiltBaselineDecisionInputs {
   const { policy, fence, snapshot, portfolioState } = input;
+  // Deterministic by construction: the observation instant is the Round's own
+  // frozen decision time, never a clock read. A Worker retry rebuilds the exact
+  // same value, so open_decision_invocation and accept_portfolio_targets both
+  // re-attach to the existing row instead of rejecting a differing p_opened_at
+  // or p_accepted_at as an idempotency key reused with different content.
+  const observedAt = fence.decisionAt;
   if (snapshot.snapshotId !== fence.snapshotId) {
     throw new TypeError("baseline snapshot is outside the Round fence");
   }
@@ -186,7 +192,7 @@ export function buildBaselineDecisionInputs(input: {
       })),
       cashWeightBps: decision.cashWeightBps,
     }),
-    observedAt: input.observedAt,
+    observedAt,
     dataCutoffAt: snapshot.cutoffAt,
     evidenceSealedAt: snapshot.sealedAt,
     // A baseline target is not derived from any market observation, so a price
@@ -220,7 +226,7 @@ export function buildBaselineDecisionInputs(input: {
       decisionAt: fence.decisionAt,
       dataCutoffAt: snapshot.cutoffAt,
       submissionDeadlineAt: fence.submissionDeadlineAt,
-      observedAt: input.observedAt,
+      observedAt,
       submissionId: uuidFromDigest(sha256(
         `twofold.baseline_submission/v1:${fence.decisionId}`,
       )),

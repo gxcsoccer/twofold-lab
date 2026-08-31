@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { DecisionAdmissionEvidence } from "@twofold/core";
 import { canonicalFinancialJson } from "@twofold/core";
 import { createHash } from "node:crypto";
 

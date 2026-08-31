@@ -98,7 +98,6 @@ const built = buildBaselineDecisionInputs({
   snapshot,
   portfolioState,
   genesisSymbol: "LULU",
-  observedAt: "2026-08-29T21:28:55.699Z",
 });
 
 function recordingPort() {

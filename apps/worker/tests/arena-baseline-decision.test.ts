@@ -119,7 +119,6 @@ function build(policy = holdGenesis, state = genesisPortfolio) {
     snapshot,
     portfolioState: state,
     genesisSymbol: "LULU",
-    observedAt: "2026-08-29T21:28:55.699Z",
   });
 }
 
@@ -186,7 +185,6 @@ describe("baseline decision inputs", () => {
       snapshot: { ...snapshot, snapshotId: "99999999-9999-4999-8999-999999999999" },
       portfolioState: genesisPortfolio,
       genesisSymbol: "LULU",
-      observedAt: "2026-08-29T21:28:55.699Z",
     })).toThrow(/outside the Round fence/);
   });
 });
@@ -247,10 +245,19 @@ describe("baseline decision RPC fences", () => {
     expect(build().admissionEvidence.decision.decisionRef).toBe(fence.decisionId);
   });
 
-  it("stamps one observedAt that the accept RPC can match byte-for-byte", () => {
+  it("takes observedAt from the Round fence, not from a clock", () => {
     const built = build();
-    expect(built.identity.observedAt).toBe("2026-08-29T21:28:55.699Z");
+    expect(built.identity.observedAt).toBe(fence.decisionAt);
     expect(built.admissionEvidence.observedAt).toBe(built.identity.observedAt);
+  });
+
+  it("rebuilds an identical decision on a later retry attempt", () => {
+    // A Worker retry re-derives every value; nothing may drift with wall time,
+    // or the RPCs reject the reopen as an idempotency key reused with
+    // different content.
+    expect(build().identity).toEqual(build().identity);
+    expect(build().admissionEvidence.evidenceSha256)
+      .toBe(build().admissionEvidence.evidenceSha256);
   });
 
   it("derives the submission id so a retry re-presents the same identity", () => {
@@ -272,19 +279,6 @@ describe("baseline decision RPC fences", () => {
     // ~65h here: a hard-coded 48h ceiling would have BLOCKed this decision.
     expect(windowMs).toBeGreaterThan(48 * 3600_000);
     expect(evidence.guardAction).toBe("ALLOW");
-  });
-
-  it("admits a decision observed late inside its own submission window", () => {
-    const late = buildBaselineDecisionInputs({
-      policy: holdGenesis,
-      entrantCode: "baseline-hold-lulu",
-      fence,
-      snapshot,
-      portfolioState: genesisPortfolio,
-      genesisSymbol: "LULU",
-      observedAt: "2026-08-31T13:00:00.000Z",
-    });
-    expect(late.admissionEvidence.guardAction).toBe("ALLOW");
   });
 
   it("weights a fractional holding instead of failing the Round", () => {

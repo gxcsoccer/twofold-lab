@@ -386,7 +386,7 @@ The DeepSeek API key is stored only in the Harness credential store or the worke
 
 - DeepSeek Harness is a developer preview. The exact version and commit are pinned and upgrades require a compatibility change.
 - `deepseek-v4-pro` is a provider alias. The manifest records the alias, request timestamp, and provider request id; it cannot claim immutable model weights.
-- One model across three Skill conditions plus four non-AI baselines is a useful MVP, but it does not yet satisfy the specification's two-model Definition of Done. The deterministic-baseline mechanism and its `HOLD_GENESIS` policy exist; the Worker phase dispatch, Season registration, and `ALL_IN_SYMBOL` instruments are not yet wired.
+- One model across three Skill conditions plus four non-AI baselines is a useful MVP, but it does not yet satisfy the specification's two-model Definition of Done. The deterministic-baseline mechanism, Worker dispatch, and snapshot widening for `ALL_IN_SYMBOL` instruments are implemented, but no Season declares a `DETERMINISTIC_BASELINE` seat yet, so neither rule has executed a real Round.
 - Season registration for a baseline family is still manual: the `entrants` array is hand-authored, and no Season yet declares a `DETERMINISTIC_BASELINE` seat.
 - A general Arena Bundle loader and untrusted Bundle isolation remain
   unimplemented; the current execution path is restricted to the audited host

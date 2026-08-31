@@ -186,7 +186,6 @@ export async function executeBaselineDecision(input: {
       snapshot,
       portfolioState,
       genesisSymbol: seat.genesisSymbol,
-      observedAt: new Date().toISOString(),
     });
   } catch (error) {
     // A baseline that cannot be priced or weighted on this Round's sealed
