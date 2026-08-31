@@ -191,6 +191,41 @@ export function createSupabaseBaselineDecisionPort(
     },
 
     async registerArtifact(input) {
+      // A content-addressed, Season-scoped artifact keeps the same object_path
+      // across Seasons while its idempotency key changes, so a second Season
+      // reusing the same frozen policy would violate
+      // artifact_storage_object_unique instead of reusing the row. Resolve the
+      // existing artifact first, exactly as the Agent Bundle path does.
+      if (!input.runScoped) {
+        const existing = await client.from("artifact_metadata")
+          .select("artifact_id,artifact_kind,content_type,byte_size,sha256")
+          .eq("storage_bucket", PRIVATE_ARTIFACT_BUCKET)
+          .eq("object_path", input.material.objectPath)
+          .maybeSingle();
+        if (existing.error !== null) {
+          throw failure("read reusable baseline artifact", existing.error);
+        }
+        if (existing.data !== null) {
+          const row = existing.data as {
+            artifact_id: string;
+            artifact_kind: string;
+            content_type: string;
+            byte_size: number | string;
+            sha256: string;
+          };
+          if (
+            row.artifact_kind !== input.artifactKind
+            || row.content_type !== "application/json"
+            || String(row.byte_size) !== input.material.byteSize
+            || row.sha256 !== input.material.sha256
+          ) {
+            throw new Error(
+              "reusable baseline artifact metadata conflicts with its bytes",
+            );
+          }
+          return row.artifact_id;
+        }
+      }
       const registration = arenaArtifactRegistrationIdentity({
         runScoped: input.runScoped,
         artifactKind: input.artifactKind,

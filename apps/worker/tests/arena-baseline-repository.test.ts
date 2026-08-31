@@ -4,6 +4,7 @@ import { createDeterministicBaselinePolicy } from "@twofold/core";
 
 import { buildBaselineDecisionInputs } from "../src/arena-baseline-decision.js";
 import {
+  createSupabaseBaselineDecisionPort,
   persistBaselineDecision,
   type BaselineDecisionPort,
 } from "../src/arena-baseline-repository.js";
@@ -203,5 +204,72 @@ describe("baseline persistence idempotency", () => {
     };
     expect(packet.metadata.marketManifestSha256).toBe(snapshot.manifestSha256);
     expect(packet.metadata.decisionId).toBe(fence.decisionId);
+  });
+});
+
+function stubClient(existing: unknown) {
+  const rpcCalls: string[] = [];
+  const client = {
+    from() {
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        maybeSingle: async () => ({ data: existing, error: null }),
+      };
+      return builder;
+    },
+    async rpc(name: string) {
+      rpcCalls.push(name);
+      return { data: [{ artifact_id: "fresh-artifact" }], error: null };
+    },
+  };
+  return { client, rpcCalls };
+}
+
+const policyRegistration = {
+  material: built.policyArtifact,
+  artifactKind: "deterministic_baseline_policy",
+  runScoped: false,
+  runId: fence.runId,
+  seasonId: fence.seasonId,
+  metadata: { schema: "twofold.deterministic_baseline_policy/v1" },
+};
+
+describe("cross-Season baseline policy artifact", () => {
+  it("reuses an existing content-addressed policy row", async () => {
+    // A later Season keeps the same object_path but takes a new idempotency
+    // key, so registering again would violate artifact_storage_object_unique.
+    const { client, rpcCalls } = stubClient({
+      artifact_id: "existing-policy",
+      artifact_kind: "deterministic_baseline_policy",
+      content_type: "application/json",
+      byte_size: built.policyArtifact.byteSize,
+      sha256: built.policyArtifact.sha256,
+    });
+    const port = createSupabaseBaselineDecisionPort(client as never, "test-worker");
+    await expect(port.registerArtifact(policyRegistration)).resolves
+      .toBe("existing-policy");
+    expect(rpcCalls).not.toContain("register_artifact");
+  });
+
+  it("registers the policy when no row exists yet", async () => {
+    const { client, rpcCalls } = stubClient(null);
+    const port = createSupabaseBaselineDecisionPort(client as never, "test-worker");
+    await expect(port.registerArtifact(policyRegistration)).resolves
+      .toBe("fresh-artifact");
+    expect(rpcCalls).toContain("register_artifact");
+  });
+
+  it("refuses an existing row whose metadata conflicts with the bytes", async () => {
+    const { client } = stubClient({
+      artifact_id: "existing-policy",
+      artifact_kind: "dsh_agent_bundle_manifest",
+      content_type: "application/json",
+      byte_size: built.policyArtifact.byteSize,
+      sha256: built.policyArtifact.sha256,
+    });
+    const port = createSupabaseBaselineDecisionPort(client as never, "test-worker");
+    await expect(port.registerArtifact(policyRegistration)).rejects
+      .toThrow(/conflicts with its bytes/);
   });
 });

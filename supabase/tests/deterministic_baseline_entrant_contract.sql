@@ -6,7 +6,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(15);
+select plan(16);
 
 -- Structural boundaries -------------------------------------------------------
 
@@ -163,6 +163,12 @@ select is(
     where season_id = 'b2000000-0000-4000-8000-000000000001'),
   '1',
   'no rejected entrant was partially recorded'
+);
+
+select matches(
+  pg_get_functiondef('public.derive_decision_kind()'::regprocedure),
+  'cannot record model usage',
+  'opening a baseline decision over existing provider usage is refused too'
 );
 
 -- Deployment assertions for the replaced RPC. Behavioural coverage of the
