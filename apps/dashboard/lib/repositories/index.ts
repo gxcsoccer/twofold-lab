@@ -1,3 +1,5 @@
+import { cache } from "react";
+
 import type {
   ArenaDecisionPageData,
   AuditData,
@@ -81,16 +83,20 @@ function marketDataErrorConnection(detail: string): ConnectionSummary {
   };
 }
 
-export async function loadSeasonOverview(): Promise<SeasonOverviewData> {
-  const { repository, fallbackConnection } = getRepository();
-  try {
-    return await repository.getSeasonOverview();
-  } catch (error) {
-    return createSetupSeasonOverview(
-      fallbackConnection ? projectionFallbackConnection(error) : undefined,
-    );
-  }
-}
+/** Cached per request: the round spine in the app chrome reads this too, and
+ *  one page render must not cost two projection reads. */
+export const loadSeasonOverview = cache(
+  async function loadSeasonOverview(): Promise<SeasonOverviewData> {
+    const { repository, fallbackConnection } = getRepository();
+    try {
+      return await repository.getSeasonOverview();
+    } catch (error) {
+      return createSetupSeasonOverview(
+        fallbackConnection ? projectionFallbackConnection(error) : undefined,
+      );
+    }
+  },
+);
 
 export async function loadRunDetail(runId: string): Promise<RunDetailData> {
   const { repository, fallbackConnection } = getRepository();
@@ -114,16 +120,19 @@ export async function loadAuditData(): Promise<AuditData> {
   }
 }
 
-export async function loadSettingsData(): Promise<SettingsData> {
-  const { repository, fallbackConnection } = getRepository();
-  try {
-    return await repository.getSettingsData();
-  } catch (error) {
-    return createSetupSettingsData(
-      fallbackConnection ? projectionFallbackConnection(error) : undefined,
-    );
-  }
-}
+/** Cached per request: the masthead readiness counter reads this too. */
+export const loadSettingsData = cache(
+  async function loadSettingsData(): Promise<SettingsData> {
+    const { repository, fallbackConnection } = getRepository();
+    try {
+      return await repository.getSettingsData();
+    } catch (error) {
+      return createSetupSettingsData(
+        fallbackConnection ? projectionFallbackConnection(error) : undefined,
+      );
+    }
+  },
+);
 
 export async function loadMarketData(): Promise<MarketDataPageData> {
   const { repository, fallbackConnection } = getRepository();

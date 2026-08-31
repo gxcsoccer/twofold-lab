@@ -1,22 +1,40 @@
-"use client";
-
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Suspense } from "react";
 
-import { useRealtimeRefresh } from "@/lib/supabase/realtime";
+import { EnvironmentStatus } from "@/components/environment-status";
+import { PrimaryNav } from "@/components/primary-nav";
+import { ReadinessBadge } from "@/components/readiness-badge";
+import { RoundSpine } from "@/components/round-spine";
 
-const navigation = [
-  { href: "/", label: "赛季概览", exact: true },
-  { href: "/data", label: "真实数据", exact: false },
-  { href: "/audit", label: "审计", exact: false },
-  { href: "/evolution", label: "自进化", exact: false },
-  { href: "/settings", label: "设置", exact: false },
-];
-
-function isActive(pathname: string, href: string, exact: boolean): boolean {
-  return exact ? pathname === href : pathname.startsWith(href.split("/").slice(0, 2).join("/"));
+/** Two folds and a fence: the seal this console keeps. */
+function Mark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <rect
+        x="0.75"
+        y="0.75"
+        width="16.5"
+        height="16.5"
+        rx="1.5"
+        fill="none"
+        stroke="#d8a93c"
+        strokeWidth="1.5"
+      />
+      <path d="M0.75 12.5 L12.5 0.75 L12.5 12.5 Z" fill="#d8a93c" fillOpacity="0.9" />
+      <path d="M12.5 12.5 L17.25 12.5" stroke="#62b9a4" strokeWidth="1.5" />
+    </svg>
+  );
 }
 
+/**
+ * The console chrome.
+ *
+ * This is a Server Component so that the two parts which read projections — the
+ * round spine and the readiness count — can be composed here directly instead
+ * of being handed to a Client Component as element props. Only the two pieces
+ * that genuinely need browser state are client: the realtime indicator and the
+ * nav, which needs the current path.
+ */
 export function AppShell({
   children,
   serverDataConfigured,
@@ -24,76 +42,47 @@ export function AppShell({
   children: React.ReactNode;
   serverDataConfigured: boolean;
 }) {
-  const pathname = usePathname();
-  const realtimeStatus = useRealtimeRefresh(true);
-  const environmentLabel = realtimeStatus === "live"
-      ? "实时 · Supabase"
-      : realtimeStatus === "connecting"
-        ? "正在连接 · Supabase"
-        : realtimeStatus === "unauthenticated"
-          ? serverDataConfigured
-            ? "真实投影 · 手动刷新"
-            : "需要登录 Supabase"
-        : realtimeStatus === "degraded"
-          ? "实时连接异常"
-          : serverDataConfigured
-            ? "真实数据 · 服务端 Supabase"
-            : "需要完成真实数据设置";
-  const statusDotClass = realtimeStatus === "live"
-      ? "status-dot status-dot-live"
-      : realtimeStatus === "degraded"
-        ? "status-dot status-dot-degraded"
-        : "status-dot";
-
   return (
-    <div className="app-frame">
+    <>
       <a className="skip-link" href="#main-content">
         跳转至主要内容
       </a>
-      <aside className="sidebar">
-        <div className="brand-block">
-          <Link href="/" className="brand-name">
-            Twofold Lab
-          </Link>
-          <p>税后模拟交易研究</p>
+
+      <header className="masthead">
+        <Link className="wordmark" href="/">
+          <Mark />
+          <strong>TWOFOLD LAB</strong>
+        </Link>
+        <p className="masthead-sub">税后模拟交易研究 · 只读控制台</p>
+        <div className="masthead-meta">
+          <EnvironmentStatus serverDataConfigured={serverDataConfigured} />
+          <Suspense fallback={null}>
+            <ReadinessBadge />
+          </Suspense>
         </div>
+      </header>
 
-        <nav className="primary-nav" aria-label="主导航">
-          {navigation.map((item) => {
-            const active = isActive(pathname, item.href, item.exact);
-            return (
-              <Link
-                key={item.href}
-                className={active ? "nav-link nav-link-active" : "nav-link"}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="sidebar-footnote">
-          <span>研究环境</span>
-          <p>不下实盘订单，不保存券商凭证。</p>
-        </div>
-      </aside>
-
-      <div className="app-body">
-        <header className="topbar">
-          <div className="environment-status" aria-live="polite">
-            <span className={statusDotClass} />
-            <span>{environmentLabel}</span>
+      <div className="app-frame">
+        <aside className="sidebar">
+          <p className="rail-label">Console</p>
+          <PrimaryNav />
+          <div className="sidebar-footnote">
+            <span>研究环境</span>
+            <p>不下实盘订单，不保存券商凭证，不在浏览器持有任何密钥。</p>
           </div>
-          <Link className="text-link" href="/data">
-            查看真实数据状态
-          </Link>
-        </header>
-        <main id="main-content" className="main-content">
-          {children}
-        </main>
+        </aside>
+
+        <div className="app-body">
+          {serverDataConfigured ? (
+            <Suspense fallback={<div className="spine spine-loading" />}>
+              <RoundSpine />
+            </Suspense>
+          ) : null}
+          <main id="main-content" className="main-content">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
