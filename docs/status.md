@@ -188,13 +188,40 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
 
 ## Remaining operations
 
-1. Observe the real S1 open reference, S1 settlement/S2 plan, S2 execution, and
-   final Liquidation-NAV ranking on 2026-08-31 and 2026-09-01.
+1. Observe the real S1 close, S1 settlement/S2 plan, S2 execution, and final
+   Liquidation-NAV ranking on 2026-08-31 and 2026-09-01. The S1 open reference
+   completed on 2026-08-31 for both entrants, but only after a first-run defect
+   described below.
+
+   The first S1 this project has ever reached exposed an inclusive-boundary bug
+   in `alpaca-open-reference.ts`: Alpaca treats the bars `end` parameter as
+   inclusive, so the one-minute window returned both the opening bar and the one
+   after it, and the guard requiring exactly one bar per symbol rejected every
+   symbol. Every later phase in the cycle is likewise executing in production for
+   the first time, so a comparable first-run defect in the S1 close, S2 capture,
+   or finalization paths should be treated as likely rather than surprising.
 2. Obtain an explicit named-human decision before scheduling the proposed
    `ONLINE_SHADOW` experiment for Round 2; rejection remains a valid result.
 3. Connect database-derived critical health alerts to an external paging
    destination.
 4. Add process/container isolation before accepting untrusted external Bundles.
+5. Record per-phase failure detail on the Arena tick. `arena_tick_observation`
+   stores only `outcome` and `phase_outcomes`, so a failing phase is visible as
+   `failed` and nothing more. The real cause is written to
+   `arena_work_item.error_message`, but only once the item reaches a terminal
+   state, which left roughly fifteen minutes of the 2026-08-31 incident with no
+   diagnosable signal anywhere.
+6. Make provider-shape errors name the observation rather than the symbol. The
+   open-reference guard reported `ambiguous AAOI bars`, which reads as a data
+   anomaly in one instrument; in fact every symbol returned two bars and AAOI was
+   merely the alphabetically first Liquid 100 member checked. Reporting the
+   observed count and timestamps would have pointed at the window immediately.
+7. Extend audited recovery deliberately, not reactively. Migration
+   `202608310008` had to widen `recover_failed_arena_work_item` mid-incident
+   because its accepted-submission fence made the four shared market-capture
+   phases unrecoverable for any Round that had reached S1 - which is every Round
+   that has a decision at all. Review the remaining fences for the same class of
+   over-broad refusal before the next Season.
 
 The exact startup, deadline, recovery, and readiness procedure is in
 [arena-runbook.md](arena-runbook.md).
