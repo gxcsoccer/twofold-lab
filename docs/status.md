@@ -243,7 +243,31 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
    is executing in production for the first time, and restructuring the DAG on
    paths that have never been observed working would confound a first-run defect
    with a refactor.
-8. Extend audited recovery deliberately, not reactively. Migration
+8. Offer an indicative live account value, strictly outside the evidence chain.
+   The pieces exist: `strategy_portfolio_state` holds current positions and
+   `calculateCompetitionValuation` is a pure function that will price any mark
+   set. What is missing is a latest-quote path - the Worker fetches daily bars
+   and the first regular-session minute, nothing intraday.
+
+   It must never reach `arena_valuation`. That table constrains `stage` to
+   `OPENING`, `S1_CLOSE`, and `S2_CLOSE`, and every stored valuation is bound to
+   a sealed, reproducible snapshot; a live figure is by definition none of those.
+   The existing check constraint is a sufficient guard, so the requirement is a
+   read-only projection that is visibly separate from the ranking, not a new
+   valuation stage.
+
+   Two things to get right in the presentation. The figure will not equal the
+   ranking NAV, because ranking uses Liquidation NAV net of estimated close fees
+   and unrealized liquidation tax; showing both without explaining the gap
+   invites reading the ranking as wrong. And the Alpaca `licenseScope` is
+   `private-research`, so confirm whether the subscription actually carries
+   real-time SIP quotes rather than delayed data, and label whichever it is
+   honestly.
+
+   Not useful before Round 1 completes: until S2 settles, every entrant still
+   holds the identical genesis position, so a live value shows the same number
+   for all of them.
+9. Extend audited recovery deliberately, not reactively. Migration
    `202608310008` had to widen `recover_failed_arena_work_item` mid-incident
    because its accepted-submission fence made the four shared market-capture
    phases unrecoverable for any Round that had reached S1 - which is every Round
