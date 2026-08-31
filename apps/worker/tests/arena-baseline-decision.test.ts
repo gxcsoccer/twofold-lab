@@ -57,6 +57,8 @@ const snapshot: ArenaMarketSnapshot = {
 
 function portfolio(input: {
   settled: string;
+  taxReserve?: string;
+  buyingPower?: string;
   positions: ArenaPortfolioState["positions"];
 }): ArenaPortfolioState {
   return {
@@ -80,7 +82,11 @@ function portfolio(input: {
       settlementCount: "0",
       corporateActionMutationCount: "0",
     },
-    cash: { settled: input.settled, taxReserve: "0", buyingPower: input.settled },
+    cash: {
+      settled: input.settled,
+      taxReserve: input.taxReserve ?? "0",
+      buyingPower: input.buyingPower ?? input.settled,
+    },
     positions: input.positions,
   };
 }
@@ -377,5 +383,30 @@ describe("HOLD_GENESIS and cash dividends", () => {
     const built = build();
     expect(built.decision.targets[0]!.targetWeightBps).toBe("10000");
     expect(built.decision.cashWeightBps).toBe("0");
+  });
+});
+
+describe("HOLD_GENESIS and the realized-tax reserve", () => {
+  it("ignores reserved cash, which is not investable", () => {
+    // A dividend credits cash and accrues a CNY reserve against it. Only the
+    // buying-power half is investable, and the S1 planner sizes against
+    // tax-reserved NAV, so weighting on settled cash would make the hold sell.
+    const reserved = build(holdGenesis, portfolio({
+      settled: "181.18",
+      taxReserve: "181.18",
+      buyingPower: "0",
+      positions: [{
+        instrumentId: LULU_INSTRUMENT,
+        symbol: "LULU",
+        quantity: "150",
+        grossCost: "18000.00",
+        taxBasis: "18000.00",
+        currency: "USD",
+        lotCount: "1",
+      }],
+    }));
+    expect(reserved.decision.cashWeightBps).toBe("0");
+    expect(reserved.decision.targets[0]!.targetWeightBps).toBe("10000");
+    expect(reserved.maxTargetDeltaBps).toBe("0");
   });
 });

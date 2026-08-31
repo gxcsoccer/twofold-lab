@@ -316,7 +316,12 @@ export function computeMaxTargetDeltaBps(input: {
   const closeBySymbol = new Map(
     input.snapshot.bars.map((bar) => [bar.symbol, bar.closePrice]),
   );
-  const cash = scaled(input.portfolioState.cash.settled);
+  // Buying power, not settled cash: settled includes the CNY realized-tax
+  // reserve, which is not investable and which the S1 order planner already
+  // excludes by sizing against tax-reserved NAV. Weighting on settled cash
+  // would overstate the cash side and make HOLD_GENESIS sell shares to reach a
+  // target it never intended.
+  const cash = scaled(input.portfolioState.cash.buyingPower);
   let total = cash;
   const markedBySymbol = new Map<string, bigint>();
   for (const position of input.portfolioState.positions) {
@@ -364,7 +369,12 @@ export function computeCashWeightBps(input: {
   const closeBySymbol = new Map(
     input.snapshot.bars.map((bar) => [bar.symbol, bar.closePrice]),
   );
-  const cash = scaled(input.portfolioState.cash.settled);
+  // Buying power, not settled cash: settled includes the CNY realized-tax
+  // reserve, which is not investable and which the S1 order planner already
+  // excludes by sizing against tax-reserved NAV. Weighting on settled cash
+  // would overstate the cash side and make HOLD_GENESIS sell shares to reach a
+  // target it never intended.
+  const cash = scaled(input.portfolioState.cash.buyingPower);
   let total = cash;
   for (const position of input.portfolioState.positions) {
     const close = closeBySymbol.get(position.symbol);
