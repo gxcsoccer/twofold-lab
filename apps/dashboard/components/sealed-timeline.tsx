@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 
-import type { SealedTimeline } from "@/lib/data/sealed-timeline";
+import { rulerSegmentTone, type SealedTimeline } from "@/lib/data/sealed-timeline";
 
 /** Inline geometry: --a start %, --b span %, --p point %. Keeping it in custom
  *  properties leaves the stylesheet free of layout arithmetic. */
@@ -57,12 +57,13 @@ export function SealedTimelinePlot({ timeline }: { timeline: SealedTimeline }) {
                 {lane.segments.map((segment, index) => (
                   <span
                     key={segment.phase}
-                    className={`ruler-seg ruler-seg-${segment.breached ? "failed" : segment.status.toLowerCase()}`}
+                    className={`ruler-seg ruler-seg-${rulerSegmentTone(segment)}`}
                     style={{
                       ...span(segment.startPct, segment.spanPct),
                       animationDelay: `${index * 45}ms`,
                     }}
                     title={segment.title}
+                    aria-label={segment.title}
                   >
                     {segment.spanPct >= 12 ? segment.label : null}
                   </span>
@@ -88,7 +89,9 @@ export function SealedTimelinePlot({ timeline }: { timeline: SealedTimeline }) {
         <span><i className="swatch-succeeded" />已封存</span>
         <span><i className="swatch-claimed" />执行中</span>
         <span><i className="swatch-requested" />等待时点</span>
-        <span><i className="swatch-failed" />已越界 / 已取消</span>
+        <span><i className="swatch-breached" />已越界</span>
+        <span><i className="swatch-failed" />失败</span>
+        <span><i className="swatch-canceled" />已取消</span>
         <span><i className="swatch-gutter" />非交易时段（已压缩）</span>
         <span><i className="swatch-fence" />冻结截止线</span>
       </div>

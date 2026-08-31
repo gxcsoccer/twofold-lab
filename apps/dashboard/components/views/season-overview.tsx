@@ -23,6 +23,7 @@ import type {
   StatusTone,
 } from "@/lib/data/contracts";
 import { PRIVATE_ARENA_PHASES } from "@/lib/data/private-arena-overview";
+import { describeDeadlineBreach } from "@/lib/data/breach-alert";
 import {
   derivePhaseState,
   isDeadlineBreach,
@@ -266,12 +267,7 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
               <strong>{entrant.entrantCode} · {phaseLabels[item.phase]}</strong>
             </div>
             <p>
-              工作在
-              {item.deadlineAt ? ` ${formatDateTime(item.deadlineAt)} ` : "冻结截止时间"}
-              之后才返回，已记为失败。本轮不再重试，也不会补发成交；
-              {entrant.noTrade !== null
-                ? "该参赛者的账本逐字节保留，持仓不变，并按同一 S2 收盘估值结转。"
-                : "该参赛者的账本逐字节保留，持仓不变。"}
+              {describeDeadlineBreach(item, entrant.noTrade, formatDateTime)}
             </p>
             <div className="breach-actions">
               <Link className="text-link" href="/audit">查看审计记录 →</Link>

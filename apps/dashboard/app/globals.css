@@ -955,7 +955,16 @@ h3 {
   color: var(--bone-faint);
 }
 
+/* Ordinary terminal failure: oxide fill, no crossed-fence hatch. */
 .ruler-seg-failed {
+  background-color: rgb(224 103 74 / 18%);
+  box-shadow: inset 0 0 0 1px var(--oxide);
+  color: var(--oxide-lift);
+}
+
+/* Crossed frozen fence: keep the oxide/hatch look that .ruler-seg-failed
+   used to carry for every breach. */
+.ruler-seg-breached {
   background-color: rgb(224 103 74 / 18%);
   background-image: var(--hatch-oxide);
   box-shadow: inset 0 0 0 1px var(--oxide);
@@ -1051,10 +1060,20 @@ h3 {
   box-shadow: inset 0 0 0 1px var(--bone-faint);
 }
 
-.swatch-failed {
+.swatch-breached {
   background-color: rgb(224 103 74 / 20%);
   background-image: var(--hatch-oxide);
   box-shadow: inset 0 0 0 1px var(--oxide);
+}
+
+.swatch-failed {
+  background-color: rgb(224 103 74 / 20%);
+  box-shadow: inset 0 0 0 1px var(--oxide);
+}
+
+.swatch-canceled {
+  background-image: var(--hatch-dim);
+  box-shadow: inset 0 0 0 1px var(--rule);
 }
 
 .swatch-gutter {
@@ -1362,6 +1381,28 @@ td:last-child {
   font-variant-numeric: tabular-nums;
 }
 
+.delivery-evidence td {
+  white-space: normal;
+  vertical-align: top;
+  background: rgb(20 19 15 / 35%);
+}
+
+tbody tr.delivery-evidence:hover td {
+  background: rgb(20 19 15 / 45%);
+}
+
+.delivery-evidence .definition-list > div {
+  padding: 7px 0;
+}
+
+.delivery-evidence .definition-list > div:first-child {
+  padding-top: 0;
+}
+
+.delivery-evidence .definition-list > div:last-child {
+  padding-bottom: 0;
+}
+
 .rank-cell {
   color: var(--bone-dim);
   font-family: var(--font-data);
@@ -1377,6 +1418,10 @@ td:last-child {
   display: grid;
   gap: 3px;
   white-space: nowrap;
+}
+
+.run-name .hash-value {
+  white-space: normal;
 }
 
 .run-name strong {
@@ -1570,6 +1615,7 @@ td:last-child {
   overflow-wrap: anywhere;
   color: var(--bone-dim);
   word-break: break-all;
+  white-space: normal;
 }
 
 .mono {
@@ -2725,6 +2771,34 @@ td:last-child {
 
   .phase-row {
     grid-template-columns: 3px minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  /* Five children: mark, name, when, StatusBadge, count. Without explicit
+     placement the badge lands in the 3px mark column on row 2. */
+  .phase-row .phase-mark {
+    grid-row: 1 / span 2;
+  }
+
+  .phase-row .phase-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .phase-row .phase-when {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .phase-row > :nth-child(4) {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .phase-row .phase-count {
+    grid-column: 3;
+    grid-row: 2;
   }
 
   .settings-form {

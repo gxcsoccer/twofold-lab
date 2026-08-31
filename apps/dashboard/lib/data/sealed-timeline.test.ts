@@ -7,7 +7,7 @@ import type {
   PrivateArenaWorkPhase,
   PrivateArenaWorkStatus,
 } from "./contracts";
-import { buildSealedTimeline } from "./sealed-timeline";
+import { buildSealedTimeline, rulerSegmentTone } from "./sealed-timeline";
 
 const PHASES = [
   "RUN_AGENT_DECISION",
@@ -220,5 +220,20 @@ describe("sealed timeline geometry", () => {
 
   it("returns nothing when there is no Round to draw", () => {
     expect(build(overview([], "2026-09-02T14:47:12.000Z", null))).toBeNull();
+  });
+});
+
+describe("ruler segment tone", () => {
+  it("uses breached for a crossed fence even when status is FAILED", () => {
+    expect(rulerSegmentTone({ breached: true, status: "FAILED" })).toBe("breached");
+    expect(rulerSegmentTone({ breached: true, status: "CANCELED" })).toBe("breached");
+  });
+
+  it("lowercases ordinary status when the fence was not crossed", () => {
+    expect(rulerSegmentTone({ breached: false, status: "FAILED" })).toBe("failed");
+    expect(rulerSegmentTone({ breached: false, status: "CANCELED" })).toBe("canceled");
+    expect(rulerSegmentTone({ breached: false, status: "SUCCEEDED" })).toBe("succeeded");
+    expect(rulerSegmentTone({ breached: false, status: "CLAIMED" })).toBe("claimed");
+    expect(rulerSegmentTone({ breached: false, status: "REQUESTED" })).toBe("requested");
   });
 });

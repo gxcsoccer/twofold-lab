@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 
 import {
@@ -187,7 +188,7 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
                   <thead>
                     <tr>
                       <th scope="col">Delivery / request ID</th>
-                      <th scope="col">响应 SHA-256</th>
+                      <th scope="col">类型</th>
                       <th scope="col">归档路径</th>
                       <th scope="col" className="numeric">字节</th>
                       <th scope="col">取回 / 可用</th>
@@ -195,33 +196,61 @@ export function MarketDataView({ data }: { data: MarketDataPageData }) {
                   </thead>
                   <tbody>
                     {data.deliveries.map((delivery) => (
-                      <tr key={delivery.deliveryId}>
-                        <td>
-                          <div className="run-name">
-                            <strong className="mono">{shortHash(delivery.deliveryId)}</strong>
-                            {delivery.providerRequestId === null
-                              ? (
-                                  <Unsealed
-                                    label="Provider 未返回"
-                                    reason="REQUEST_ID_MISSING"
-                                  />
-                                )
-                              : <span>request {delivery.providerRequestId}</span>}
-                          </div>
-                        </td>
-                        <td className="mono">{shortHash(delivery.responseSha256)}</td>
-                        <td className="mono">
-                          {delivery.storageBucket}/{delivery.objectPath}
-                        </td>
-                        <td className="numeric tabular">
-                          {formatInteger(delivery.byteSize)}
-                        </td>
-                        <td className="mono">
-                          {formatDateTime(delivery.retrievedAt)}
-                          <br />
-                          {formatDateTime(delivery.availableAt)}
-                        </td>
-                      </tr>
+                      <Fragment key={delivery.deliveryId}>
+                        <tr>
+                          <td>
+                            <div className="run-name">
+                              <strong className="mono hash-value">{delivery.deliveryId}</strong>
+                              {delivery.providerRequestId === null
+                                ? (
+                                    <Unsealed
+                                      label="Provider 未返回"
+                                      reason="REQUEST_ID_MISSING"
+                                    />
+                                  )
+                                : <span>request {delivery.providerRequestId}</span>}
+                            </div>
+                          </td>
+                          <td className="mono">{delivery.contentType}</td>
+                          <td className="mono">
+                            {delivery.storageBucket}/{delivery.objectPath}
+                          </td>
+                          <td className="numeric tabular">
+                            {formatInteger(delivery.byteSize)}
+                          </td>
+                          <td className="mono">
+                            {formatDateTime(delivery.retrievedAt)}
+                            <br />
+                            {formatDateTime(delivery.availableAt)}
+                          </td>
+                        </tr>
+                        <tr className="delivery-evidence">
+                          <td colSpan={5}>
+                            <dl className="definition-list">
+                              <div>
+                                <dt>Raw artifact</dt>
+                                <dd className="mono hash-value">{delivery.rawArtifactId}</dd>
+                              </div>
+                              <div>
+                                <dt>响应 SHA-256</dt>
+                                <dd className="mono hash-value">{delivery.responseSha256}</dd>
+                              </div>
+                              <div>
+                                <dt>Normalized manifest SHA-256</dt>
+                                <dd className="mono hash-value">{delivery.normalizedManifestSha256}</dd>
+                              </div>
+                              <div>
+                                <dt>首次观测</dt>
+                                <dd className="mono">{formatDateTime(delivery.firstObservedAt)}</dd>
+                              </div>
+                              <div>
+                                <dt>首次归档</dt>
+                                <dd className="mono">{formatDateTime(delivery.firstStoredAt)}</dd>
+                              </div>
+                            </dl>
+                          </td>
+                        </tr>
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

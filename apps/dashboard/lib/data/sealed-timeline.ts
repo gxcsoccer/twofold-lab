@@ -39,6 +39,13 @@ export interface TimelineSegment {
   readonly title: string;
 }
 
+/** CSS tone for a ruler segment. A crossed fence is not an ordinary FAILED. */
+export function rulerSegmentTone(
+  segment: Pick<TimelineSegment, "breached" | "status">,
+): string {
+  return segment.breached ? "breached" : segment.status.toLowerCase();
+}
+
 export interface TimelineFence {
   readonly key: string;
   readonly atPct: number;
