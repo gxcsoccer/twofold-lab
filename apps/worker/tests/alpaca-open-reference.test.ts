@@ -196,3 +196,57 @@ describe("Alpaca first-minute open reference", () => {
     })).rejects.toThrow("missing SPY");
   });
 });
+
+describe("Alpaca inclusive end boundary", () => {
+  // Regression for the first real S1 open reference: Alpaca's `end` is
+  // inclusive, so a one-minute window returns the opening bar and the one
+  // after it. Requiring a single bar failed every symbol in the Round.
+  const twoBarBody = (() => {
+    const parsed = JSON.parse(rawBody) as {
+      bars: Record<string, Array<Record<string, unknown>>>;
+    };
+    for (const symbol of Object.keys(parsed.bars)) {
+      parsed.bars[symbol] = [
+        parsed.bars[symbol]![0]!,
+        { ...parsed.bars[symbol]![0]!, t: "2026-08-31T13:31:00Z", o: 999 },
+      ];
+    }
+    return JSON.stringify(parsed);
+  })();
+
+  const response = (body: string) => vi.fn(async () => new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "x-request-id": "request-open-two-bars",
+    },
+  })) as unknown as typeof fetch;
+
+  it("selects the opening minute when the next minute is also returned", async () => {
+    const delivery = await fetchAlpacaOpenReferences(config, {
+      sessionDate: "2026-08-31",
+      expectedOpenAt: "2026-08-31T13:30:00.000Z",
+      availableAt: "2026-08-31T13:32:00.000Z",
+      fetchImplementation: response(twoBarBody),
+      now: () => new Date("2026-08-31T13:32:05.000Z"),
+    });
+    for (const reference of delivery.references) {
+      expect(reference.barStart).toBe("2026-08-31T13:30:00.000Z");
+    }
+  });
+
+  it("still rejects a genuinely duplicated opening bar", async () => {
+    const parsed = JSON.parse(rawBody) as {
+      bars: Record<string, Array<Record<string, unknown>>>;
+    };
+    const first = Object.keys(parsed.bars)[0]!;
+    parsed.bars[first] = [parsed.bars[first]![0]!, parsed.bars[first]![0]!];
+    await expect(fetchAlpacaOpenReferences(config, {
+      sessionDate: "2026-08-31",
+      expectedOpenAt: "2026-08-31T13:30:00.000Z",
+      availableAt: "2026-08-31T13:32:00.000Z",
+      fetchImplementation: response(JSON.stringify(parsed)),
+      now: () => new Date("2026-08-31T13:32:05.000Z"),
+    })).rejects.toThrow(/ambiguous/);
+  });
+});

@@ -171,10 +171,23 @@ export async function fetchAlpacaOpenReferences(
     if (!Array.isArray(symbolBars) || symbolBars.length === 0) {
       throw new Error(`Alpaca open-reference response is missing ${symbol}`);
     }
-    if (symbolBars.length !== 1) {
+    // Alpaca treats `end` as inclusive, so a one-minute window returns both the
+    // opening bar and the one after it. Select the opening minute by timestamp
+    // rather than assuming the response holds a single bar: that keeps the
+    // guard fail-closed regardless of the provider's boundary semantics, and
+    // still rejects a missing or genuinely duplicated opening bar.
+    const opening = symbolBars.filter((entry) => {
+      const candidate = record(entry, `${symbol} first-minute bar`);
+      return timestamp(text(candidate.t, `${symbol}.t`), `${symbol}.t`)
+        === expectedOpenAt;
+    });
+    if (opening.length === 0) {
+      throw new Error(`Alpaca returned a wrong first-minute bar for ${symbol}`);
+    }
+    if (opening.length !== 1) {
       throw new Error(`Alpaca open-reference response has ambiguous ${symbol} bars`);
     }
-    const bar = record(symbolBars[0], `${symbol} first-minute bar`);
+    const bar = record(opening[0], `${symbol} first-minute bar`);
     const barStart = timestamp(text(bar.t, `${symbol}.t`), `${symbol}.t`);
     if (barStart !== expectedOpenAt) {
       throw new Error(`Alpaca returned a wrong first-minute bar for ${symbol}`);
