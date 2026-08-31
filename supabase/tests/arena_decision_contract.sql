@@ -297,7 +297,7 @@ begin
 end;
 $$;
 
-select plan(73);
+select plan(76);
 
 select has_table('public', 'decision_invocation', 'decision_invocation exists');
 select has_table('public', 'agent_session_lineage', 'agent_session_lineage exists');
@@ -1527,7 +1527,8 @@ as $$
     p_decision_id,
     '51000000-0000-4000-8000-000000000001',
     '51000000-0000-4000-8000-000000000002',
-    0,
+    (select coalesce(max(stream_seq), 0) from public.event_stream
+      where stream_id = '51000000-0000-4000-8000-000000000001'),
     p_root_session_id,
     'hold-genesis',
     (select artifact_id from public.artifact_metadata
@@ -1664,7 +1665,8 @@ select throws_ok(
   $q$insert into public.model_usage_record (
     idempotency_key, run_id, season_id, decision_id, harness_session_id,
     turn_index, step_index, attempt_index, provider, model,
-    request_started_at, completed_at, usage_status, usage_source
+    request_started_at, completed_at, usage_status, usage_source,
+    cost_status, recorded_by
   ) values (
     'arena:baseline:usage',
     '51000000-0000-4000-8000-000000000001',
@@ -1673,11 +1675,77 @@ select throws_ok(
     'baseline:hold-genesis:51000000-0000-4000-8000-000000000004',
     0, 0, 0, 'deepseek-official', 'deepseek-v4-pro',
     '2026-08-23T00:11:00Z', '2026-08-23T00:11:05Z',
-    'captured', 'assistant_message'
+    'provider_unreported', 'provider_unreported', 'unavailable', 'arena-contract'
   )$q$,
   '23514',
   'a deterministic baseline decision cannot record model usage',
   'a model-free entrant can never be billed a provider request'
+);
+
+-- Behavioural cover for the usage-before-invocation ordering. Recording usage
+-- for a decision that has no invocation yet is legal, and opening a baseline
+-- invocation over it must then be refused.
+insert into public.model_usage_record (
+  idempotency_key, run_id, season_id, decision_id, harness_session_id,
+  turn_index, step_index, attempt_index, provider, model,
+  request_started_at, completed_at, usage_status, usage_source,
+  cost_status, recorded_by
+) values (
+  'arena:baseline:usage-first',
+  '51000000-0000-4000-8000-000000000001',
+  '51000000-0000-4000-8000-000000000002',
+  '51000000-0000-4000-8000-000000000009',
+  'some-agent-session',
+  0, 0, 0, 'deepseek-official', 'deepseek-v4-pro',
+  '2026-08-23T00:11:00Z', '2026-08-23T00:11:05Z',
+  'provider_unreported', 'provider_unreported', 'unavailable', 'arena-contract'
+);
+
+select is(
+  (select count(*)::text from public.model_usage_record
+    where decision_id = '51000000-0000-4000-8000-000000000009'),
+  '1',
+  'usage may be recorded for a decision that has not been opened yet'
+);
+
+select is(
+  (public.register_artifact(
+    'arena:baseline:packet-nine',
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002',
+    null,
+    'baseline_decision_packet',
+    'twofold-private-artifacts',
+    'packets/' || repeat('bf', 32) || '.json',
+    'application/json', 512, repeat('bf', 32),
+    'arena-contract',
+    jsonb_build_object(
+      'schema', 'twofold.baseline_decision_packet/v1',
+      'decisionId', '51000000-0000-4000-8000-000000000009',
+      'marketSnapshotId', (
+        select snapshot_id::text from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      ),
+      'marketManifestSha256', (
+        select manifest_sha256 from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      )
+    )
+  )).artifact_kind,
+  'baseline_decision_packet',
+  'a packet exists for the usage-first attempt'
+);
+
+select throws_ok(
+  $q$select pg_temp.open_baseline_invocation(
+    'arena:baseline:open-over-usage',
+    '51000000-0000-4000-8000-000000000009',
+    'baseline:hold-genesis:51000000-0000-4000-8000-00000000000a',
+    'arena:baseline:packet-nine'
+  )$q$,
+  '23514',
+  'a deterministic baseline decision cannot record model usage',
+  'a baseline decision cannot be opened over pre-existing provider usage'
 );
 
 select * from finish();

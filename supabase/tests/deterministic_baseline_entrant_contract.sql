@@ -168,7 +168,7 @@ select is(
 select matches(
   pg_get_functiondef('public.derive_decision_kind()'::regprocedure),
   'cannot record model usage',
-  'opening a baseline decision over existing provider usage is refused too'
+  'the deployed guard text is present; arena_decision_contract covers the behaviour'
 );
 
 -- Deployment assertions for the replaced RPC. Behavioural coverage of the

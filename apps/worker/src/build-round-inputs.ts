@@ -55,6 +55,17 @@ async function main(): Promise<void> {
   );
   if (round === undefined) throw new TypeError("requested Round is not configured");
   const requestedEntrant = option("entrant");
+  // Validate rather than coerce: widening the parsed field to string must not
+  // turn a typo or an unsupported class into a silent root-only diagnostic.
+  const agentExecutionClass = (
+    value: string,
+  ): "ROOT_ONLY" | "ORCHESTRATED" => {
+    if (value !== "ROOT_ONLY" && value !== "ORCHESTRATED") {
+      throw new TypeError(`entrant executionClass ${value} is unsupported`);
+    }
+    return value;
+  };
+
   // Agent-only diagnostic: buildArenaInputs rejects any other execution class,
   // so a deterministic baseline seat is skipped rather than throwing and hiding
   // the Agent seats this command exists to dump.
@@ -85,9 +96,7 @@ async function main(): Promise<void> {
       bundleId: entrant.bundleId,
       bundleSha256: entrant.bundleSha256,
       presetId: entrant.presetId,
-      executionClass: entrant.executionClass === "ORCHESTRATED"
-        ? "ORCHESTRATED" as const
-        : "ROOT_ONLY" as const,
+      executionClass: agentExecutionClass(entrant.executionClass),
     };
     const fence = await repository.roundEntrantFence(
       round.roundId,

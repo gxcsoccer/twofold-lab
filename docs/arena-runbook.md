@@ -86,10 +86,12 @@ DAG as an Agent entrant, and `round:readiness` counts it like any other seat.
 
 Two operational limits:
 
-- Only `HOLD_GENESIS` is usable today. An `ALL_IN_SYMBOL` baseline needs its
-  instrument inside the decision universe; sealing an extra symbol into the
-  snapshot is not sufficient and would fail `PREPARE_S1_ORDERS` for every
-  entrant in the Round. See the known constraints in architecture.md.
+- `ALL_IN_SYMBOL` works only for an instrument already inside the decision
+  universe, e.g. a Liquid 100 member such as `NVDA`. An instrument outside it -
+  SPY and QQQ are ETFs the builder excludes - is not supported: sealing the
+  extra symbol into the snapshot is not sufficient and would fail
+  `PREPARE_S1_ORDERS` for every entrant in the Round. See the known constraints
+  in architecture.md.
 - The Worker still advertises `RUN_AGENT_DECISION` only when `DEEPSEEK_API_KEY`
   is set, so a baseline is claimed only by a keyed Worker. That is satisfied
   whenever baselines share a Round with Agent entrants.
