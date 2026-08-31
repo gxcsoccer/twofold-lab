@@ -51,6 +51,12 @@ export interface DeterministicBaselineTarget {
   readonly targetWeightBps: string;
 }
 
+/** Current marked composition of a hold account, in basis points. */
+export interface HoldWeightsBps {
+  readonly positionBps: string;
+  readonly cashBps: string;
+}
+
 export interface DeterministicBaselineDecision {
   readonly policyId: string;
   readonly rule: DeterministicBaselineRule;
@@ -111,6 +117,14 @@ export function deriveDeterministicBaselineDecision(input: {
   readonly policy: DeterministicBaselinePolicy;
   readonly genesisSymbol: string;
   readonly priceableSymbols: readonly string[];
+  /**
+   * Current marked composition, required by `HOLD_GENESIS` whenever the account
+   * carries cash. A cash dividend credits settled cash, and targeting the
+   * position at the full weight would spend it on more shares - dividend
+   * reinvestment, not holding. Preserving the observed weights keeps "never
+   * trades" true.
+   */
+  readonly holdWeights?: HoldWeightsBps;
 }): DeterministicBaselineDecision {
   const genesisSymbol = pattern(
     input.genesisSymbol,
@@ -132,18 +146,35 @@ export function deriveDeterministicBaselineDecision(input: {
     );
   }
 
+  const hold = input.policy.rule === "HOLD_GENESIS"
+    ? input.holdWeights
+    : undefined;
+  if (hold !== undefined) {
+    assertBps(hold.positionBps, "holdWeights.positionBps");
+    assertBps(hold.cashBps, "holdWeights.cashBps");
+    if (BigInt(hold.positionBps) + BigInt(hold.cashBps) !== 10_000n) {
+      throw new RangeError("hold weights must total the full portfolio weight");
+    }
+  }
+
   return Object.freeze({
     policyId: input.policy.policyId,
     rule: input.policy.rule,
     targets: Object.freeze([Object.freeze({
       symbol: resolved,
-      targetWeightBps: FULL_WEIGHT_BPS,
+      targetWeightBps: hold?.positionBps ?? FULL_WEIGHT_BPS,
     })]),
-    cashWeightBps: "0",
+    cashWeightBps: hold?.cashBps ?? "0",
     decisionSummary: input.policy.rule === "HOLD_GENESIS"
       ? `Deterministic baseline: hold the genesis ${resolved} position without trading.`
       : `Deterministic baseline: hold ${resolved} at the full portfolio weight.`,
   });
+}
+
+function assertBps(value: string, field: string): void {
+  if (!/^(?:0|[1-9]\d*)$/.test(value) || BigInt(value) > 10_000n) {
+    throw new TypeError(`${field} must be a basis-point integer from 0 to 10000`);
+  }
 }
 
 function pattern(value: unknown, expected: RegExp, field: string): string {

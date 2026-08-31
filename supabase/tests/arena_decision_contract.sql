@@ -297,7 +297,7 @@ begin
 end;
 $$;
 
-select plan(70);
+select plan(73);
 
 select has_table('public', 'decision_invocation', 'decision_invocation exists');
 select has_table('public', 'agent_session_lineage', 'agent_session_lineage exists');
@@ -1450,7 +1450,9 @@ select is(
     'baseline-hold-lulu',
     '51000000-0000-4000-8000-000000000001',
     'twofold-baseline-hold-genesis@1.0.0',
-    '14a7e54b2244e417e48b653a27742ce41038855a306e8b4ad2ff1da7b6016b39',
+    -- Must equal the policy artifact SHA registered below: the invocation
+    -- boundary now binds the presented policy to the frozen seat identity.
+    repeat('bb', 32),
     'none', 'none', 'none',
     'DETERMINISTIC_BASELINE',
     '{"track":"MAIN_ARENA"}'::jsonb,
@@ -1512,7 +1514,8 @@ create or replace function pg_temp.open_baseline_invocation(
   p_idempotency_key text,
   p_decision_id uuid,
   p_root_session_id text,
-  p_packet_key text
+  p_packet_key text,
+  p_policy_key text default 'arena:baseline:policy'
 )
 returns public.decision_invocation
 language sql
@@ -1530,7 +1533,7 @@ as $$
     (select artifact_id from public.artifact_metadata
       where idempotency_key = p_packet_key),
     (select artifact_id from public.artifact_metadata
-      where idempotency_key = 'arena:baseline:policy'),
+      where idempotency_key = p_policy_key),
     (select snapshot_id from public.market_snapshot
       where idempotency_key = 'arena:snapshot'),
     (select decision_at from arena_contract_context),
@@ -1594,6 +1597,67 @@ select throws_ok(
   '22023',
   'decision packet artifact does not match invocation scope or market snapshot',
   'a baseline run cannot open a decision on an Agent decision packet'
+);
+
+select is(
+  (public.register_artifact(
+    'arena:baseline:packet-seven',
+    '51000000-0000-4000-8000-000000000001',
+    '51000000-0000-4000-8000-000000000002',
+    null,
+    'baseline_decision_packet',
+    'twofold-private-artifacts',
+    'packets/' || repeat('be', 32) || '.json',
+    'application/json', 512, repeat('be', 32),
+    'arena-contract',
+    jsonb_build_object(
+      'schema', 'twofold.baseline_decision_packet/v1',
+      'decisionId', '51000000-0000-4000-8000-000000000007',
+      'marketSnapshotId', (
+        select snapshot_id::text from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      ),
+      'marketManifestSha256', (
+        select manifest_sha256 from public.market_snapshot
+         where idempotency_key = 'arena:snapshot'
+      )
+    )
+  )).artifact_kind,
+  'baseline_decision_packet',
+  'a packet exists for the foreign-policy attempt'
+);
+
+select is(
+  (public.register_artifact(
+    'arena:baseline:foreign-policy',
+    null,
+    '51000000-0000-4000-8000-000000000002',
+    null,
+    'deterministic_baseline_policy',
+    'twofold-private-artifacts',
+    'policies/' || repeat('bd', 32) || '.json',
+    'application/json', 256, repeat('bd', 32),
+    'arena-contract',
+    jsonb_build_object(
+      'schema', 'twofold.deterministic_baseline_policy/v1',
+      'policyId', 'all-in-nvda'
+    )
+  )).artifact_kind,
+  'deterministic_baseline_policy',
+  'a second baseline policy exists that this seat did not freeze'
+);
+
+select throws_ok(
+  $q$select pg_temp.open_baseline_invocation(
+    'arena:baseline:open-foreign-policy',
+    '51000000-0000-4000-8000-000000000007',
+    'baseline:hold-genesis:51000000-0000-4000-8000-000000000008',
+    'arena:baseline:packet-seven',
+    'arena:baseline:foreign-policy'
+  )$q$,
+  '22023',
+  'Agent Bundle artifact does not match invocation scope',
+  'a baseline cannot open a decision under a policy the seat did not freeze'
 );
 
 select throws_ok(

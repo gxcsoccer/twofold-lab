@@ -127,10 +127,22 @@ export function buildBaselineDecisionInputs(input: {
     }
   }
 
+  // A hold account that received a cash dividend must keep that cash, not spend
+  // it on more shares. Preserve the observed split instead of forcing the full
+  // weight onto the position.
+  const cashBps = computeCashWeightBps({ snapshot, portfolioState });
   const decision = deriveDeterministicBaselineDecision({
     policy,
     genesisSymbol: input.genesisSymbol,
     priceableSymbols: [...snapshot.symbols],
+    ...(policy.rule === "HOLD_GENESIS"
+      ? {
+          holdWeights: {
+            positionBps: (FULL_WEIGHT_BPS - cashBps).toString(),
+            cashBps: cashBps.toString(),
+          },
+        }
+      : {}),
   });
   const target = decision.targets[0]!;
 
@@ -193,6 +205,8 @@ export function buildBaselineDecisionInputs(input: {
     snapshot,
     portfolioState,
     targetSymbol: target.symbol,
+    targetWeightBps: target.targetWeightBps,
+    targetCashWeightBps: decision.cashWeightBps,
   });
 
   const admissionEvidence = createDecisionAdmissionEvidence({
@@ -293,7 +307,12 @@ export function computeMaxTargetDeltaBps(input: {
   readonly snapshot: ArenaMarketSnapshot;
   readonly portfolioState: ArenaPortfolioState;
   readonly targetSymbol: string;
+  /** Defaults to the full weight, i.e. an all-in switch. */
+  readonly targetWeightBps?: string;
+  readonly targetCashWeightBps?: string;
 }): string {
+  const targetBps = BigInt(input.targetWeightBps ?? FULL_WEIGHT_BPS.toString());
+  const targetCashBps = BigInt(input.targetCashWeightBps ?? "0");
   const closeBySymbol = new Map(
     input.snapshot.bars.map((bar) => [bar.symbol, bar.closePrice]),
   );
@@ -327,14 +346,43 @@ export function computeMaxTargetDeltaBps(input: {
   for (const [symbol, marked] of markedBySymbol) {
     const current = (marked * FULL_WEIGHT_BPS) / total;
     const delta = symbol === input.targetSymbol
-      ? FULL_WEIGHT_BPS - current
+      ? abs(targetBps - current)
       : current;
     if (delta > maximum) maximum = delta;
   }
-  if (!markedBySymbol.has(input.targetSymbol)) maximum = FULL_WEIGHT_BPS;
-  const cashWeight = (cash * FULL_WEIGHT_BPS) / total;
-  if (cashWeight > maximum) maximum = cashWeight;
+  if (!markedBySymbol.has(input.targetSymbol)) maximum = targetBps;
+  const cashDelta = abs(targetCashBps - (cash * FULL_WEIGHT_BPS) / total);
+  if (cashDelta > maximum) maximum = cashDelta;
   return maximum.toString();
+}
+
+/** Marked cash weight of the account, in basis points. */
+export function computeCashWeightBps(input: {
+  readonly snapshot: ArenaMarketSnapshot;
+  readonly portfolioState: ArenaPortfolioState;
+}): bigint {
+  const closeBySymbol = new Map(
+    input.snapshot.bars.map((bar) => [bar.symbol, bar.closePrice]),
+  );
+  const cash = scaled(input.portfolioState.cash.settled);
+  let total = cash;
+  for (const position of input.portfolioState.positions) {
+    const close = closeBySymbol.get(position.symbol);
+    if (close === undefined) {
+      throw new RangeError(
+        `sealed snapshot cannot mark held position ${position.symbol}`,
+      );
+    }
+    total += (scaled(position.quantity) * scaled(close)) / 10n ** WEIGHT_SCALE;
+  }
+  if (total <= 0n) {
+    throw new RangeError("baseline cannot weight an empty portfolio");
+  }
+  return (cash * FULL_WEIGHT_BPS) / total;
+}
+
+function abs(value: bigint): bigint {
+  return value < 0n ? -value : value;
 }
 
 function scaled(value: string): bigint {

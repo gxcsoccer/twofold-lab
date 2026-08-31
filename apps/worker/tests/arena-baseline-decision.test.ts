@@ -190,7 +190,7 @@ describe("baseline decision inputs", () => {
 });
 
 describe("baseline target delta", () => {
-  it("counts idle cash as a reallocation the baseline must undo", () => {
+  it("measures an all-in switch away from idle cash as a full reallocation", () => {
     const delta = computeMaxTargetDeltaBps({
       snapshot,
       portfolioState: portfolio({
@@ -207,7 +207,7 @@ describe("baseline target delta", () => {
       }),
       targetSymbol: "LULU",
     });
-    // Half the portfolio sits in cash, so the hold target implies moving it.
+    // Defaults to an all-in target, which would have to absorb the cash half.
     expect(delta).toBe("5000");
   });
 
@@ -340,5 +340,42 @@ describe("HOLD_GENESIS ledger fence", () => {
       }),
       genesisSymbol: "LULU",
     })).toThrow(/do not match the declared genesis symbol/);
+  });
+});
+
+describe("HOLD_GENESIS and cash dividends", () => {
+  // A cash dividend credits settled cash. Targeting the position at the full
+  // weight would spend it on more shares - dividend reinvestment, not holding.
+  const afterDividend = portfolio({
+    settled: "181.18",
+    positions: [{
+      instrumentId: LULU_INSTRUMENT,
+      symbol: "LULU",
+      quantity: "150",
+      grossCost: "18000.00",
+      taxBasis: "18000.00",
+      currency: "USD",
+      lotCount: "1",
+    }],
+  });
+
+  it("keeps dividend cash instead of buying more shares with it", () => {
+    const built = build(holdGenesis, afterDividend);
+    const positionBps = BigInt(built.decision.targets[0]!.targetWeightBps);
+    const cashBps = BigInt(built.decision.cashWeightBps);
+    expect(cashBps).toBeGreaterThan(0n);
+    expect(positionBps + cashBps).toBe(10000n);
+  });
+
+  it("reports the hold as a near-zero reallocation, not a rebalance", () => {
+    // Only the bps flooring residue, so no whole-share order can result.
+    expect(Number(build(holdGenesis, afterDividend).maxTargetDeltaBps))
+      .toBeLessThanOrEqual(1);
+  });
+
+  it("still targets the full weight when the account holds no cash", () => {
+    const built = build();
+    expect(built.decision.targets[0]!.targetWeightBps).toBe("10000");
+    expect(built.decision.cashWeightBps).toBe("0");
   });
 });
