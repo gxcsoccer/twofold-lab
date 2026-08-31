@@ -52,57 +52,16 @@ describe("US Liquid 100 activation planning", () => {
   });
 });
 
-describe("baseline instruments outside the decision universe", () => {
-  const base = {
-    snapshotId: "e502936c-1c97-49d5-9351-deb16721cb5b",
-    targetSessionDate: "2026-08-28",
-    sealedAt: "2026-08-29T20:05:37.11948+00:00",
-  };
-
-  it("accepts a snapshot widened by exactly the declared baseline symbols", () => {
-    expect(planUsLiquid100Activation({
-      artifact,
-      snapshot: { ...base, symbols: [...symbols, "SPY", "QQQ"] },
-      now: "2026-08-29T20:20:00.000Z",
-      activationDelayMinutes: 10,
-      baselineSymbols: ["SPY", "QQQ"],
-    }).snapshotId).toBe(base.snapshotId);
-  });
-
-  it("rejects a snapshot carrying an undeclared extra symbol", () => {
-    expect(() => planUsLiquid100Activation({
-      artifact,
-      snapshot: { ...base, symbols: [...symbols, "SPY", "QQQ"] },
-      now: "2026-08-29T20:20:00.000Z",
-      activationDelayMinutes: 10,
-      baselineSymbols: ["SPY"],
-    })).toThrow(/frozen member set/);
-  });
-
-  it("rejects a declared baseline symbol that is missing from the snapshot", () => {
-    expect(() => planUsLiquid100Activation({
-      artifact,
-      snapshot: { ...base, symbols: [...symbols] },
-      now: "2026-08-29T20:20:00.000Z",
-      activationDelayMinutes: 10,
-      baselineSymbols: ["SPY"],
-    })).toThrow(/frozen member set/);
-  });
-
-  it("rejects a baseline symbol that is already a decision-universe member", () => {
-    expect(() => planUsLiquid100Activation({
-      artifact,
-      snapshot: { ...base, symbols: [...symbols] },
-      now: "2026-08-29T20:20:00.000Z",
-      activationDelayMinutes: 10,
-      baselineSymbols: ["LULU"],
-    })).toThrow(/already in the decision universe/);
-  });
-
+describe("snapshot member fence", () => {
   it("still rejects an unwidened snapshot with a wrong member", () => {
     expect(() => planUsLiquid100Activation({
       artifact,
-      snapshot: { ...base, symbols: [...symbols.slice(1), "NOPE"] },
+      snapshot: {
+        snapshotId: "e502936c-1c97-49d5-9351-deb16721cb5b",
+        targetSessionDate: "2026-08-28",
+        sealedAt: "2026-08-29T20:05:37.11948+00:00",
+        symbols: [...symbols.slice(1), "NOPE"],
+      },
       now: "2026-08-29T20:20:00.000Z",
       activationDelayMinutes: 10,
     })).toThrow(/frozen member set/);

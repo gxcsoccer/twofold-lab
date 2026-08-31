@@ -24,7 +24,7 @@ interface CompetitionConfig {
   readonly entrants: ReadonlyArray<{
     readonly entrantId: string;
     readonly entrantCode: string;
-    readonly executionClass: "ROOT_ONLY" | "ORCHESTRATED";
+    readonly executionClass: string;
     readonly runId: string;
     readonly bundleId: string;
     readonly bundleSha256: string;
@@ -55,9 +55,15 @@ async function main(): Promise<void> {
   );
   if (round === undefined) throw new TypeError("requested Round is not configured");
   const requestedEntrant = option("entrant");
+  // Agent-only diagnostic: buildArenaInputs rejects any other execution class,
+  // so a deterministic baseline seat is skipped rather than throwing and hiding
+  // the Agent seats this command exists to dump.
+  const agentEntrants = config.entrants.filter(
+    (candidate) => candidate.executionClass !== "DETERMINISTIC_BASELINE",
+  );
   const entrants = requestedEntrant === undefined
-    ? config.entrants
-    : config.entrants.filter(
+    ? agentEntrants
+    : agentEntrants.filter(
         (candidate) => candidate.entrantCode === requestedEntrant,
       );
   if (entrants.length === 0) throw new TypeError("requested entrant is not configured");
@@ -79,7 +85,9 @@ async function main(): Promise<void> {
       bundleId: entrant.bundleId,
       bundleSha256: entrant.bundleSha256,
       presetId: entrant.presetId,
-      executionClass: entrant.executionClass,
+      executionClass: entrant.executionClass === "ORCHESTRATED"
+        ? "ORCHESTRATED" as const
+        : "ROOT_ONLY" as const,
     };
     const fence = await repository.roundEntrantFence(
       round.roundId,

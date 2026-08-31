@@ -86,22 +86,10 @@ DAG as an Agent entrant, and `round:readiness` counts it like any other seat.
 
 Two operational limits:
 
-- An `ALL_IN_SYMBOL` baseline needs its instrument in the Round's sealed
-  snapshot. The Liquid 100 universe excludes ETFs, so SPY/QQQ must be declared
-  when preparing the Season and ingested into the same snapshot:
-
-  ```bash
-  pnpm ingest:market -- --session-date=YYYY-MM-DD   # must cover SPY and QQQ
-  pnpm season:prepare:liquid100 -- \
-    --artifact=config/universes/us-liquid-100-YYYY-MM-DD.json \
-    --snapshot-id=<sealed-snapshot-uuid> \
-    --baseline-symbols=SPY,QQQ \
-    --season-code=... --display-name=... --output=...
-  ```
-
-  The snapshot must then seal exactly the 100 members plus those symbols; an
-  undeclared extra or a missing declared symbol both fail closed. Agents still
-  see only the 100 as eligible.
+- Only `HOLD_GENESIS` is usable today. An `ALL_IN_SYMBOL` baseline needs its
+  instrument inside the decision universe; sealing an extra symbol into the
+  snapshot is not sufficient and would fail `PREPARE_S1_ORDERS` for every
+  entrant in the Round. See the known constraints in architecture.md.
 - The Worker still advertises `RUN_AGENT_DECISION` only when `DEEPSEEK_API_KEY`
   is set, so a baseline is claimed only by a keyed Worker. That is satisfied
   whenever baselines share a Round with Agent entrants.

@@ -112,6 +112,21 @@ export function buildBaselineDecisionInputs(input: {
     throw new TypeError("baseline snapshot is outside the Round fence");
   }
 
+  // The policy SHA-256 covers {policyId, rule, symbol}; for HOLD_GENESIS the
+  // symbol is null and the instrument comes from the Season config, which that
+  // hash does not cover. Make the durable ledger authoritative instead: the
+  // account's own single holding must equal the declared genesis symbol, so
+  // editing the config mid-Season fails closed rather than silently retargeting
+  // the baseline at a different instrument.
+  if (policy.rule === "HOLD_GENESIS") {
+    const held = portfolioState.positions;
+    if (held.length !== 1 || held[0]!.symbol !== input.genesisSymbol) {
+      throw new TypeError(
+        "HOLD_GENESIS account holdings do not match the declared genesis symbol",
+      );
+    }
+  }
+
   const decision = deriveDeterministicBaselineDecision({
     policy,
     genesisSymbol: input.genesisSymbol,

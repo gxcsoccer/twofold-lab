@@ -367,11 +367,12 @@ export async function buildArenaInputs(input: {
         }
       : packetPortfolioState(input.portfolioState),
     constraints: {
-      // The sealed snapshot may be a superset of the decision universe: it also
-      // prices the instruments a deterministic baseline holds. Eligibility must
-      // therefore come from the frozen universe, never from the snapshot, or a
-      // widened snapshot would silently grant Agents the ETFs the Liquid 100
-      // builder deliberately excludes.
+      // Sourced from the frozen universe rather than the snapshot. The two are
+      // identical today because the snapshot fence above requires it; naming the
+      // universe states the intent. Note this list is advisory to the model: the
+      // durable guard in accept_portfolio_targets checks the snapshot, so it is
+      // the snapshot fence - not this field - that keeps ineligible instruments
+      // untradeable.
       eligible_symbols: input.decisionUniverse === undefined
         ? [...input.snapshot.symbols]
         : input.decisionUniverse.artifact.members
@@ -567,8 +568,8 @@ function packetLiquidUniverse(
   if (
     artifact.asOfSessionDate !== snapshot.targetSessionDate
     || artifact.frozenAt > snapshot.cutoffAt
-    || memberSymbols.length > snapshotSymbols.length
-    || memberSymbols.some((symbol) => !snapshotSymbols.includes(symbol))
+    || memberSymbols.length !== snapshotSymbols.length
+    || memberSymbols.some((symbol, index) => symbol !== snapshotSymbols[index])
   ) throw new TypeError("liquid universe does not match the bound market snapshot");
   const features = artifact.candidates.filter((candidate) => candidate.selected)
     .sort((left, right) => left.symbol.localeCompare(right.symbol, "en"))

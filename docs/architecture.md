@@ -276,14 +276,6 @@ the baseline rather than a policy violation. The Dashboard therefore labels it
 distinctly so a baseline result is never read as an Agent that beat the
 constraints.
 
-A baseline may hold an instrument the decision universe deliberately excludes -
-SPY and QQQ are ETFs the Liquid 100 builder filters out. The sealed snapshot may
-therefore be a superset of the decision universe, but only by the exact baseline
-symbols declared at activation, so the member set stays an auditable equality
-rather than merely permissive. Packet eligibility is bound to the frozen universe
-and never to the snapshot, so widening the snapshot cannot grant an Agent access
-to those instruments.
-
 The baseline carries its own invocation identity and a thin persistence path
 rather than widening `ArenaInvocationIdentity`. That Agent type pins a trusted
 preset, an execution class, and a locked provider/model route; widening it would
@@ -386,7 +378,9 @@ The DeepSeek API key is stored only in the Harness credential store or the worke
 
 - DeepSeek Harness is a developer preview. The exact version and commit are pinned and upgrades require a compatibility change.
 - `deepseek-v4-pro` is a provider alias. The manifest records the alias, request timestamp, and provider request id; it cannot claim immutable model weights.
-- One model across three Skill conditions plus four non-AI baselines is a useful MVP, but it does not yet satisfy the specification's two-model Definition of Done. The deterministic-baseline mechanism, Worker dispatch, and snapshot widening for `ALL_IN_SYMBOL` instruments are implemented, but no Season declares a `DETERMINISTIC_BASELINE` seat yet, so neither rule has executed a real Round.
+- One model across three Skill conditions plus four non-AI baselines is a useful MVP, but it does not yet satisfy the specification's two-model Definition of Done. The deterministic-baseline mechanism and Worker dispatch exist and `HOLD_GENESIS` is usable, but no Season declares a `DETERMINISTIC_BASELINE` seat yet, so it has not executed a real Round.
+- `ALL_IN_SYMBOL` is not usable on an instrument outside the decision universe. Sealing SPY or QQQ into the snapshot alone is not enough: `get_arena_cycle_material` requires the resolved instrument universe to have exactly the snapshot's cardinality, and instruments are registered only from the Season config universe, so an unregistered extra symbol fails `PREPARE_S1_ORDERS` for every entrant in the Round. `eligible_symbols` is also advisory - the durable guard in `accept_portfolio_targets` checks the snapshot, so widening the snapshot would additionally make the excluded ETFs genuinely tradeable by Agents. Supporting it needs instrument registration plus a durable eligibility guard bound to the decision universe, not a relaxed activation check.
+- A baseline decision writes no `dashboard.arena_decision` projection, so the Season view's per-entrant decision link resolves to the not-ready state for a baseline seat.
 - Season registration for a baseline family is still manual: the `entrants` array is hand-authored, and no Season yet declares a `DETERMINISTIC_BASELINE` seat.
 - A general Arena Bundle loader and untrusted Bundle isolation remain
   unimplemented; the current execution path is restricted to the audited host

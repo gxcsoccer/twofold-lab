@@ -39,18 +39,6 @@ function option(name: string): string | undefined {
     ?.slice(name.length + 3);
 }
 
-function baselineSymbols(): readonly string[] {
-  const raw = option("baseline-symbols");
-  if (raw === undefined || raw.trim() === "") return [];
-  return raw.split(",").map((symbol) => {
-    const normalized = symbol.trim();
-    if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(normalized)) {
-      throw new TypeError(`baseline symbol ${symbol} is invalid`);
-    }
-    return normalized;
-  });
-}
-
 function arguments_(): Arguments {
   const artifactPath = option("artifact");
   const snapshotId = option("snapshot-id");
@@ -102,11 +90,6 @@ async function main(): Promise<void> {
     },
     now: new Date().toISOString(),
     activationDelayMinutes: input.activationDelayMinutes,
-    // Instruments a deterministic baseline holds that are deliberately outside
-    // the decision universe, e.g. --baseline-symbols=SPY,QQQ. The snapshot must
-    // then seal exactly the 100 members plus these, and Agents still see only
-    // the 100 as eligible.
-    baselineSymbols: baselineSymbols(),
   });
 
   const apiKeyId = secret("ALPACA_API_KEY_ID");

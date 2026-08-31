@@ -4,6 +4,12 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
+/** Entrant execution classes the database accepts. */
+export type SeasonEntrantExecutionClass =
+  | "ROOT_ONLY"
+  | "ORCHESTRATED"
+  | "DETERMINISTIC_BASELINE";
+
 export interface RegisterArenaSeasonRpcArguments {
   readonly p_idempotency_key: string;
   readonly p_season_id: string;
@@ -28,7 +34,7 @@ export interface RegisterSeasonEntrantRpcArguments {
   readonly p_preset_id: string;
   readonly p_provider: string;
   readonly p_model: string;
-  readonly p_execution_class: "ROOT_ONLY" | "ORCHESTRATED";
+  readonly p_execution_class: SeasonEntrantExecutionClass;
   readonly p_metadata: Readonly<Record<string, unknown>>;
   readonly p_recorded_by: string;
 }
@@ -55,7 +61,7 @@ export interface SeasonEntrantIdentity {
   readonly presetId: string;
   readonly provider: string;
   readonly model: string;
-  readonly executionClass: "ROOT_ONLY" | "ORCHESTRATED";
+  readonly executionClass: SeasonEntrantExecutionClass;
   readonly recordedBy: string;
   readonly recordedAt: string;
 }
@@ -278,8 +284,12 @@ function literal<const T extends string>(
   return expected;
 }
 
-function executionClass(value: unknown): "ROOT_ONLY" | "ORCHESTRATED" {
-  if (value !== "ROOT_ONLY" && value !== "ORCHESTRATED") {
+function executionClass(value: unknown): SeasonEntrantExecutionClass {
+  if (
+    value !== "ROOT_ONLY"
+    && value !== "ORCHESTRATED"
+    && value !== "DETERMINISTIC_BASELINE"
+  ) {
     throw new TypeError("execution_class is unsupported");
   }
   return value;

@@ -301,3 +301,44 @@ describe("baseline decision RPC fences", () => {
     expect(delta).toBe("0");
   });
 });
+
+describe("HOLD_GENESIS ledger fence", () => {
+  it("refuses a config genesis symbol the account does not actually hold", () => {
+    // season.openingSymbol is not covered by the policy SHA-256, so the durable
+    // ledger is authoritative: editing it mid-Season must fail closed rather
+    // than silently retargeting the baseline.
+    expect(() => buildBaselineDecisionInputs({
+      policy: holdGenesis,
+      entrantCode: "baseline-hold-lulu",
+      fence,
+      snapshot,
+      portfolioState: genesisPortfolio,
+      genesisSymbol: "NVDA",
+    })).toThrow(/do not match the declared genesis symbol/);
+  });
+
+  it("refuses a hold account that has drifted off a single holding", () => {
+    expect(() => buildBaselineDecisionInputs({
+      policy: holdGenesis,
+      entrantCode: "baseline-hold-lulu",
+      fence,
+      snapshot,
+      portfolioState: portfolio({
+        settled: "0",
+        positions: [
+          ...genesisPortfolio.positions,
+          {
+            instrumentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            symbol: "AAPL",
+            quantity: "10",
+            grossCost: "2300.00",
+            taxBasis: "2300.00",
+            currency: "USD",
+            lotCount: "1",
+          },
+        ],
+      }),
+      genesisSymbol: "LULU",
+    })).toThrow(/do not match the declared genesis symbol/);
+  });
+});
