@@ -81,6 +81,7 @@ export function createArenaCloseSnapshotHandler(input: {
     if (item.scheduledAt !== timing.availableAt) {
       throw new TypeError("work item is not bound to the frozen close availability time");
     }
+    assertCloseCanCarryAnS2Plan(stage, schedule, input.now?.() ?? new Date());
 
     const delivery = await fetchAlpacaDailyBars(Object.freeze({
       ...input.config,
@@ -111,6 +112,38 @@ export function createArenaCloseSnapshotHandler(input: {
       manifestSha256: persisted.manifestSha256,
     });
   };
+}
+
+/**
+ * The S2 plan's plannedAt is the sealed evidence instant, and a plan may not
+ * be written on its own trade date. A close first sealed on the S2 session
+ * date can therefore never carry a legal plan, however healthy the capture
+ * looks.
+ *
+ * This is the cheap half of that boundary: it runs before the provider request
+ * so a doomed capture costs nothing and names its reason. It cannot be the
+ * whole of it - `sealed_at` is assigned by the database after the request
+ * returns, so a capture that crosses midnight would still pass here. The
+ * authoritative refusal is in `register_arena_round_close_snapshot`, against
+ * the instant actually recorded.
+ *
+ * Reuse is never refused: evidence sealed in time stays legal no matter when
+ * a later entrant item consumes it.
+ */
+function assertCloseCanCarryAnS2Plan(
+  stage: ArenaCloseSnapshotStage,
+  schedule: ArenaCloseSnapshotRoundSchedule,
+  sealingAt: Date,
+): void {
+  if (stage !== "S1_CLOSE") return;
+  const sealingDate = sealingAt.toISOString().slice(0, 10);
+  if (sealingDate >= schedule.s2SessionDate) {
+    throw new TypeError(
+      `an S1 close first sealed on ${sealingDate} cannot plan S2 orders for `
+      + `${schedule.s2SessionDate}: the plan instant is the sealed evidence, `
+      + "so this Round can no longer settle S1",
+    );
+  }
 }
 
 const FROZEN_SOURCE_FIELDS = Object.freeze([

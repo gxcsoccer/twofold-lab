@@ -54,6 +54,7 @@ export function createArenaTaxFxHandler(input: {
     if (item.scheduledAt !== timing.availableAt) {
       throw new TypeError("tax-FX work is not bound to the close evidence boundary");
     }
+    assertFxCanCarryAnS2Plan(stage, schedule, input.now?.() ?? new Date());
     const delivery = await fetchEcbUsdCnyReferenceCross(input.config, {
       effectiveDate: timing.sessionDate,
       allowPreviousDate: true,
@@ -71,6 +72,30 @@ export function createArenaTaxFxHandler(input: {
       crossSha256: persisted.crossSha256,
     });
   };
+}
+
+/**
+ * `s2PlannedAt` is the maximum of the close seal and this reference's
+ * visibility, so disposition FX first observed on the S2 session date makes
+ * the plan illegal even when the close itself was sealed in time - a reused
+ * close does not rescue it. Same division of labour as the close capture: this
+ * is the cheap pre-request refusal, and
+ * `register_arena_round_tax_fx_reference` holds the authoritative one.
+ */
+function assertFxCanCarryAnS2Plan(
+  stage: ArenaTaxFxStage,
+  schedule: ArenaTaxFxSchedule,
+  observingAt: Date,
+): void {
+  if (stage !== "S1_DISPOSITION") return;
+  const observedDate = observingAt.toISOString().slice(0, 10);
+  if (observedDate >= schedule.s2SessionDate) {
+    throw new TypeError(
+      `S1 disposition FX first observed on ${observedDate} cannot plan S2 `
+      + `orders for ${schedule.s2SessionDate}: the plan instant is the latest `
+      + "sealed evidence, so this Round can no longer settle S1",
+    );
+  }
 }
 
 function stageForPhase(phase: string): ArenaTaxFxStage {
