@@ -11,27 +11,37 @@ import {
   type ArenaCloseSnapshotStage,
   type ArenaRoundCloseSnapshot,
 } from "./arena-close-snapshot-repository.js";
-import type { AlpacaMarketDelivery } from "./market-data.js";
+import {
+  ALPACA_DATA_ORIGIN,
+  type AlpacaMarketDelivery,
+} from "./market-data.js";
 import { SupabaseMarketDataRepository } from "./market-data-repository.js";
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+// Both rows arrive as untyped PostgREST payloads. The close fence is decided
+// by their content, and the endpoint is dialled with provider credentials, so
+// every field is parsed rather than asserted.
 interface DecisionSnapshotRow {
   readonly symbols: unknown;
-  readonly source_version_id: string;
+  readonly source_version_id: unknown;
 }
 
-interface SourceVersionRow {
-  readonly source_version_id: string;
-  readonly provider: string;
-  readonly dataset: string;
-  readonly version_key: string;
-  readonly endpoint_base_url: string;
-  readonly feed: string;
-  readonly adjustment: string;
-  readonly timeframe: string;
-  readonly normalizer_version: string;
-  readonly license_scope: string;
-  readonly config_sha256: string;
-  readonly effective_from: string;
+export interface SourceVersionRow {
+  readonly source_version_id: unknown;
+  readonly provider: unknown;
+  readonly dataset: unknown;
+  readonly version_key: unknown;
+  readonly endpoint_base_url: unknown;
+  readonly feed: unknown;
+  readonly adjustment: unknown;
+  readonly timeframe: unknown;
+  readonly normalizer_version: unknown;
+  readonly license_scope: unknown;
+  readonly config_sha256: unknown;
+  readonly effective_from: unknown;
 }
 
 interface RoundDecision {
@@ -152,18 +162,22 @@ export class SupabaseArenaCloseSnapshotStore implements ArenaCloseSnapshotStore 
       }
       return symbol;
     });
+    const sourceVersionId = uuid(
+      decision.source_version_id,
+      `decision snapshot ${round.decision_snapshot_id} source_version_id`,
+    );
     const source = await this.#client.from("data_source_version")
       .select(
         "source_version_id,provider,dataset,version_key,endpoint_base_url,feed,adjustment,timeframe,normalizer_version,license_scope,config_sha256,effective_from",
       )
-      .eq("source_version_id", decision.source_version_id)
+      .eq("source_version_id", sourceVersionId)
       .single();
     if (source.error !== null) {
       throw new Error(`read Round source version failed: ${source.error.message}`);
     }
     return Object.freeze({
       symbols: Object.freeze(symbols),
-      source: frozenSource(source.data as SourceVersionRow),
+      source: parseFrozenMarketSource(source.data as SourceVersionRow),
     });
   }
 
@@ -181,7 +195,17 @@ export class SupabaseArenaCloseSnapshotStore implements ArenaCloseSnapshotStore 
   }
 }
 
-function frozenSource(row: SourceVersionRow): ArenaCloseSnapshotFrozenSource {
+/**
+ * Parses the Round's registered daily-bars route. A close is dialled and
+ * sealed under exactly this row, so an unusable one has to name itself here
+ * rather than surface as an invalid date, an unclear PostgREST filter, or an
+ * outbound request to somewhere other than the provider.
+ */
+export function parseFrozenMarketSource(
+  row: SourceVersionRow,
+): ArenaCloseSnapshotFrozenSource {
+  const sourceVersionId = uuid(row.source_version_id, "source_version_id");
+  const field = (name: string) => `Round source version ${sourceVersionId} ${name}`;
   if (
     row.provider !== "alpaca"
     || row.dataset !== "us_stock_daily_bars"
@@ -190,21 +214,77 @@ function frozenSource(row: SourceVersionRow): ArenaCloseSnapshotFrozenSource {
     || (row.feed !== "sip" && row.feed !== "iex")
   ) {
     throw new TypeError(
-      `Round source version ${row.source_version_id} is not an Alpaca daily-bars route`,
+      `Round source version ${sourceVersionId} is not an Alpaca daily-bars route`,
     );
   }
   return Object.freeze({
-    sourceVersionId: row.source_version_id,
+    sourceVersionId,
     provider: "alpaca",
     dataset: "us_stock_daily_bars",
-    versionKey: row.version_key,
-    endpointBaseUrl: row.endpoint_base_url,
+    versionKey: text(row.version_key, field("version_key")),
+    endpointBaseUrl: trustedOrigin(
+      row.endpoint_base_url,
+      field("endpoint_base_url"),
+    ),
     feed: row.feed,
     adjustment: "raw",
     timeframe: "1Day",
-    normalizerVersion: row.normalizer_version,
-    licenseScope: row.license_scope,
-    configSha256: row.config_sha256,
-    effectiveFrom: new Date(row.effective_from).toISOString(),
+    normalizerVersion: text(row.normalizer_version, field("normalizer_version")),
+    licenseScope: text(row.license_scope, field("license_scope")),
+    configSha256: sha256(row.config_sha256, field("config_sha256")),
+    effectiveFrom: timestamp(row.effective_from, field("effective_from")),
   });
+}
+
+function text(value: unknown, field: string): string {
+  if (typeof value !== "string" || value === "" || value.trim() !== value) {
+    throw new TypeError(`${field} must be a non-empty trimmed string`);
+  }
+  return value;
+}
+
+function uuid(value: unknown, field: string): string {
+  const parsed = text(value, field);
+  if (!UUID_PATTERN.test(parsed)) throw new TypeError(`${field} must be a UUID`);
+  return parsed;
+}
+
+function sha256(value: unknown, field: string): string {
+  const parsed = text(value, field);
+  if (!SHA256_PATTERN.test(parsed)) {
+    throw new TypeError(`${field} must be SHA-256`);
+  }
+  return parsed;
+}
+
+function timestamp(value: unknown, field: string): string {
+  const parsed = text(value, field);
+  const instant = new Date(parsed);
+  if (!Number.isFinite(instant.getTime())) {
+    throw new TypeError(`${field} must be a timestamp`);
+  }
+  return instant.toISOString();
+}
+
+/**
+ * The Worker dials this host with provider credentials attached, so a stored
+ * endpoint is admitted only on the same trusted origin the deployment
+ * configuration is held to.
+ */
+function trustedOrigin(value: unknown, field: string): string {
+  const parsed = text(value, field).replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(parsed);
+  } catch {
+    throw new TypeError(`${field} must be a URL`);
+  }
+  if (
+    url.origin !== ALPACA_DATA_ORIGIN
+    || url.username !== "" || url.password !== ""
+    || url.pathname !== "/" || url.search !== "" || url.hash !== ""
+  ) {
+    throw new TypeError(`${field} must use the trusted origin ${ALPACA_DATA_ORIGIN}`);
+  }
+  return parsed;
 }

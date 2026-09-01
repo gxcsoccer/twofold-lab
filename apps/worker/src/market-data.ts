@@ -7,7 +7,7 @@ import { boundedProviderSignal } from "./provider-deadline.js";
 const SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,14}$/;
 const JSON_NUMBER_PATTERN = /^(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/;
 const SESSION_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const ALPACA_DATA_ORIGIN = "https://data.alpaca.markets";
+export const ALPACA_DATA_ORIGIN = "https://data.alpaca.markets";
 const MAX_ALPACA_PAGES = 100;
 
 export const ALPACA_NORMALIZER_VERSION = "alpaca-bars-v1";
