@@ -1,8 +1,14 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
-import type { AlpacaMarketDataConfig } from "../src/market-data.js";
+import {
+  ALPACA_NORMALIZER_VERSION,
+  type AlpacaMarketDataConfig,
+} from "../src/market-data.js";
 import {
   createArenaCloseSnapshotHandler,
+  type ArenaCloseSnapshotFrozenSource,
   type ArenaCloseSnapshotStore,
 } from "../src/arena-close-snapshot-handler.js";
 import type { ArenaRoundCloseSnapshot } from "../src/arena-close-snapshot-repository.js";
@@ -20,6 +26,29 @@ const config: AlpacaMarketDataConfig = {
   sourceEffectiveFrom: "2026-08-23T00:00:00.000Z",
   licenseScope: "private-research",
 };
+
+// The Round froze a different daily-bars route than this deployment ingests
+// with, exactly as a universe-scoped Season does.
+const frozenSourceConfig = {
+  provider: "alpaca",
+  dataset: "us_stock_daily_bars",
+  endpointBaseUrl: "https://data.alpaca.markets",
+  feed: "sip",
+  adjustment: "raw",
+  timeframe: "1Day",
+  normalizerVersion: ALPACA_NORMALIZER_VERSION,
+  licenseScope: "private-research",
+} as const;
+
+const source: ArenaCloseSnapshotFrozenSource = Object.freeze({
+  ...frozenSourceConfig,
+  sourceVersionId: "ab000000-0000-4000-8000-000000000001",
+  versionKey: "alpaca-sip-raw-1day-liquid100-v1",
+  configSha256: createHash("sha256")
+    .update(JSON.stringify(frozenSourceConfig))
+    .digest("hex"),
+  effectiveFrom: "2026-08-28T00:00:00.000Z",
+});
 
 const item = {
   schema: "twofold.arena_work_item_result/v1",
@@ -62,7 +91,10 @@ const existing = {
   boundAt: "2026-08-31T20:20:07.000Z",
 } as ArenaRoundCloseSnapshot;
 
-function store(found: ArenaRoundCloseSnapshot | null): ArenaCloseSnapshotStore {
+function store(
+  found: ArenaRoundCloseSnapshot | null,
+  frozen: ArenaCloseSnapshotFrozenSource = source,
+): ArenaCloseSnapshotStore {
   return {
     load: vi.fn(async (_roundId, stage) => found === null
       ? null
@@ -70,6 +102,7 @@ function store(found: ArenaRoundCloseSnapshot | null): ArenaCloseSnapshotStore {
     schedule: vi.fn(async () => ({
       roundId: item.roundId,
       symbols: ["LULU"],
+      source: frozen,
       s1SessionDate: "2026-08-31",
       s1CloseAvailableAt: "2026-08-31T20:20:00.000Z",
       s2SessionDate: "2026-09-01",
@@ -133,6 +166,65 @@ describe("Arena close-snapshot phase handler", () => {
     );
     expect(new URL(fetchImplementation.mock.calls[0]![0] as URL).searchParams
       .get("symbols")).toBe("LULU");
+  });
+
+  it("seals the close under the source version the Round froze", async () => {
+    const repository = store(null);
+    const body = JSON.stringify({
+      bars: { LULU: [{
+        t: "2026-08-31T04:00:00Z", o: 120, h: 121, l: 118,
+        c: 118.42, v: 100, n: 10, vw: 119.2,
+      }] },
+      next_page_token: null,
+    });
+    const fetchImplementation = vi.fn(async () => new Response(body, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const handler = createArenaCloseSnapshotHandler({
+      config,
+      store: repository,
+      fetchImplementation: fetchImplementation as never,
+      now: () => new Date("2026-08-31T20:20:05.000Z"),
+    });
+
+    await handler(item, new AbortController().signal);
+
+    expect(repository.persist).toHaveBeenCalledWith(
+      item.roundId,
+      "S1_CLOSE",
+      expect.objectContaining({
+        source: expect.objectContaining({
+          versionKey: source.versionKey,
+          effectiveFrom: source.effectiveFrom,
+          configSha256: source.configSha256,
+        }),
+      }),
+    );
+  });
+
+  it("names the field that keeps a capture out of the frozen source", async () => {
+    const repository = store(null, Object.freeze({
+      ...source,
+      normalizerVersion: "alpaca-bars-v0",
+    }));
+    const fetchImplementation = vi.fn(async () => new Response(JSON.stringify({
+      bars: { LULU: [{
+        t: "2026-08-31T04:00:00Z", o: 120, h: 121, l: 118,
+        c: 118.42, v: 100, n: 10, vw: 119.2,
+      }] },
+      next_page_token: null,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const handler = createArenaCloseSnapshotHandler({
+      config,
+      store: repository,
+      fetchImplementation: fetchImplementation as never,
+      now: () => new Date("2026-08-31T20:20:05.000Z"),
+    });
+
+    await expect(handler(item, new AbortController().signal))
+      .rejects.toThrow(/normalizerVersion alpaca-bars-v1 is not alpaca-bars-v0/);
+    expect(repository.persist).not.toHaveBeenCalled();
   });
 
   it("binds the explicit S2 close phase to cycle-ready time", async () => {
