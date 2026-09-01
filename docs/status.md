@@ -221,8 +221,11 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
    `SETTLE_S1_AND_PREPARE_S2` then failed three times between 13:01Z and 13:07Z
    with `S2 plan.plannedAt must precede the planned trade date`. That rule
    (`packages/core/src/rebalance.ts`) refuses to plan a session's orders on that
-   session's own calendar date. Settlement had slipped past 2026-09-01T00:00Z,
-   so the S2 plan had become impossible to produce legally. The phase commits
+   session's own calendar date, and the S2 plan's `plannedAt` is
+   `max(close.sealedAt, dispositionFx.visibleAt)` - the sealed evidence instant,
+   not the moment the phase runs. Recovering the close on the morning of
+   2026-09-01 therefore stamped the plan with a 2026-09-01 instant, which is the
+   S2 trade date itself, so no legal plan existed any more. The phase commits
    the S1 settlement and the S2 plan together, so nothing was half-applied:
    `paper_fill_settlement` is still empty and both ledgers are untouched.
    Recovery is refused by design - `recover_failed_arena_work_item` fences any
@@ -378,13 +381,21 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
      `s2_session_date`: a split changes the share counts the frozen plan is
      written in, so planning across an unapplied one would be wrong. A split
      on the S2 session date therefore remains a hard stop, which is correct.
-   - Correct the phase deadline. `deadline_at` is currently `s2_open_at`, but
-     the planning rule makes `s2_session_date` at `00:00Z` the last instant the
-     phase can legally succeed. The current deadline promises roughly seventeen
-     hours of runway, thirteen of which do not exist. This is what made a
-     fifteen-minute close-capture failure fatal without anyone seeing it: the
-     Round was already unrecoverable at midnight, and the queue only reported
-     it at 13:07Z the next day, twenty-three minutes before S2 open.
+   - Correct the deadline on the phase whose lateness is actually fatal, which
+     is the close capture rather than the settlement. Because `plannedAt` is
+     the sealed evidence instant, settlement stays legal for as long as its
+     evidence was sealed before the S2 calendar date, so
+     `SETTLE_S1_AND_PREPARE_S2` keeps `s2_open_at` - the bound its own arrival
+     guard and the Worker's `s1SettledAt >= s2OpenAt` check already use, and
+     the window that lets an overnight Worker outage still be recovered in the
+     morning. `CAPTURE_S1_CLOSE` is the one that cannot be late: a close sealed
+     on or after the S2 date can never produce a legal plan, yet its queue
+     deadline also ran to `s2_open_at`. That is what made a fifteen-minute
+     capture failure fatal without anyone seeing it - the Round was already
+     unrecoverable at midnight, and the queue only reported it at 13:07Z the
+     next day, twenty-three minutes before S2 open. Its deadline now ends at
+     midnight; the close evidence fence is unchanged, since this is a
+     scheduling bound rather than an evidence rule.
 
 The exact startup, deadline, recovery, and readiness procedure is in
 [arena-runbook.md](arena-runbook.md).

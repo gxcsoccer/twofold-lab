@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(5);
+select plan(6);
 
 select public.register_arena_season(
   'settlement-window-contract:season',
@@ -236,12 +236,23 @@ select is(
   false,
   'the same dividend still holds finalization until the account prepares it'
 );
+-- The S2 plan's plannedAt is the sealed evidence instant, not a wall clock, so
+-- settlement stays legal overnight and keeps the full window its arrival guard
+-- allows. The close is what cannot be late: evidence sealed on the S2 date can
+-- never produce a legal plan.
+select is(
+  (select deadline_at from public.arena_work_item
+    where round_id = 'e9500000-0000-4000-8000-000000000001'
+      and phase = 'CAPTURE_S1_CLOSE'),
+  '2026-09-01T00:00:00.000Z'::timestamptz,
+  'the S1 close expires when its evidence stops being usable'
+);
 select is(
   (select deadline_at from public.arena_work_item
     where round_id = 'e9500000-0000-4000-8000-000000000001'
       and phase = 'SETTLE_S1_AND_PREPARE_S2'),
-  '2026-09-01T00:00:00.000Z'::timestamptz,
-  'S1 settlement expires when its planning window closes, not at the S2 open'
+  '2026-09-01T13:30:00.000Z'::timestamptz,
+  'S1 settlement keeps the overnight window its arrival guard allows'
 );
 
 -- A dividend whose ex-date is the S1 session date is still in scope: the

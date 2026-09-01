@@ -14,9 +14,17 @@
 -- share counts a frozen plan is written in, so it keeps the wider horizon and
 -- a split on the S2 session date remains a hard stop.
 --
--- The phase deadline was also dishonest: s2_open_at promised roughly seventeen
--- hours of runway, thirteen of which the planning rule forbids. It is now the
--- last instant the phase can legally succeed.
+-- The lateness that is actually fatal belongs one phase earlier. The S2 plan's
+-- plannedAt is max(close.sealedAt, dispositionFx.visibleAt), not a wall clock,
+-- so settlement stays legal for as long as its evidence was sealed before the
+-- S2 calendar date - which is why SETTLE_S1_AND_PREPARE_S2 keeps its s2_open_at
+-- deadline, matching both the arrival guard in register_arena_s1_checkpoint and
+-- the s1SettledAt >= s2OpenAt guard in the Worker. A close sealed on or after
+-- the S2 date can never produce a legal plan, so CAPTURE_S1_CLOSE is the phase
+-- whose deadline was dishonest: it promised runway until the S2 open, and the
+-- Round was already dead at midnight. Its queue deadline now ends there. The
+-- close evidence fence is unchanged; this is a scheduling bound, not an
+-- evidence rule.
 
 begin;
 
@@ -136,15 +144,15 @@ do $$
 declare
   v_oid regprocedure := 'public.seed_arena_round_work(uuid, text)'::regprocedure;
   v_source text;
-  v_old text := E'        (5, ''SETTLE_S1_AND_PREPARE_S2''::text,\n'
+  v_old text := E'        (4, ''CAPTURE_S1_CLOSE''::text,\n'
     || E'          v_round.s1_close_available_at, v_round.s2_open_at),\n';
-  v_new text := E'        (5, ''SETTLE_S1_AND_PREPARE_S2''::text,\n'
+  v_new text := E'        (4, ''CAPTURE_S1_CLOSE''::text,\n'
     || E'          v_round.s1_close_available_at,\n'
     || E'          (v_round.s2_session_date::timestamp) at time zone ''UTC''),\n';
 begin
   select pg_get_functiondef(v_oid) into v_source;
   if position(v_old in v_source) = 0 then
-    raise exception 'could not locate the S1 settlement phase deadline clause'
+    raise exception 'could not locate the S1 close capture deadline clause'
       using errcode = '55000';
   end if;
   execute replace(v_source, v_old, v_new);
