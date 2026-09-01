@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 2026-08-30 (Asia/Shanghai).
+Updated: 2026-09-01 (Asia/Shanghai).
 
 ## Current production outcome
 
@@ -24,8 +24,10 @@ decision and froze deterministic S1 plans.
 - The static start gate reports `READY_FOR_S1`: two accepted decisions, two
   frozen S1 plans, four successful pre-S1 work items, a live production Worker,
   the correct active Season, and no operational alerts.
-- S1 executes on 2026-08-31 and S2 on 2026-09-01; final ranking follows the S2
-  close evidence boundary.
+- Round 1 ended without a single trade. No fill settled, no S1 checkpoint and
+  no S2 plan exist, both accounts still hold the genesis position, and the
+  `OPENING` pair above remains their only valuation. Operations item 1 records
+  why, and item 11 records what must change before another Round is seeded.
 
 No live-broker capability exists. Every order and fill is simulated.
 
@@ -188,18 +190,48 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
 
 ## Remaining operations
 
-1. Observe the real S1 close, S1 settlement/S2 plan, S2 execution, and final
-   Liquidation-NAV ranking on 2026-08-31 and 2026-09-01. The S1 open reference
-   completed on 2026-08-31 for both entrants, but only after a first-run defect
-   described below.
+1. Round 1 is over and produced nothing to rank. Three separate defects fired
+   in sequence, each in a phase reaching production for the first time. The
+   prediction recorded here on 2026-08-30 - that a comparable first-run defect
+   in the S1 close or settlement paths was likely rather than surprising - held
+   for both of the phases that ran after it was written.
 
-   The first S1 this project has ever reached exposed an inclusive-boundary bug
-   in `alpaca-open-reference.ts`: Alpaca treats the bars `end` parameter as
+   The S1 open reference exposed an inclusive-boundary bug in
+   `alpaca-open-reference.ts`: Alpaca treats the bars `end` parameter as
    inclusive, so the one-minute window returned both the opening bar and the one
    after it, and the guard requiring exactly one bar per symbol rejected every
-   symbol. Every later phase in the cycle is likewise executing in production for
-   the first time, so a comparable first-run defect in the S1 close, S2 capture,
-   or finalization paths should be treated as likely rather than surprising.
+   symbol. Fixed in `9036980`; both entrants completed the phase at
+   2026-08-31T14:17Z.
+
+   `CAPTURE_S1_CLOSE` then failed three times between 2026-08-31T20:47Z and
+   20:49Z with `close snapshot does not match the frozen Round evidence fence`.
+   The close-snapshot handler took its daily-bars route from deployment
+   configuration and overrode only the symbols, so it sealed under
+   `alpaca-sip-raw-1day-v1` (`95658594-8d92-4454-bc32-5ea3d34a0147`) while the
+   Round's decision snapshot was frozen under
+   `alpaca-sip-raw-1day-liquid100-v1` (`ab7260c1-86c9-4acf-a05e-9b28e8414f17`).
+   `register_arena_round_close_snapshot` compares the two `source_version_id`
+   values, so no retry could ever pass, and each attempt sealed a fresh snapshot
+   before failing: 15 duplicate `market_close` rows for 2026-08-31 that nothing
+   references. The frozen source is now Round state rather than deployment
+   configuration, and a capture that cannot reproduce it fails before anything
+   is sealed. Both items were recovered at 2026-09-01T11:59Z and the close bound
+   at 12:03Z under the Round's own source version.
+
+   `SETTLE_S1_AND_PREPARE_S2` then failed three times between 13:01Z and 13:07Z
+   with `S2 plan.plannedAt must precede the planned trade date`. That rule
+   (`packages/core/src/rebalance.ts`) refuses to plan a session's orders on that
+   session's own calendar date. Settlement had slipped past 2026-09-01T00:00Z,
+   so the S2 plan had become impossible to produce legally. The phase commits
+   the S1 settlement and the S2 plan together, so nothing was half-applied:
+   `paper_fill_settlement` is still empty and both ledgers are untouched.
+   Recovery is refused by design - `recover_failed_arena_work_item` fences any
+   non-capture phase whose Round entry has an accepted submission - and would be
+   pointless, because the rule is deterministic.
+
+   The terminal transition fired `enqueue_arena_no_trade_recovery`, which queued
+   one `S1_CHECKPOINT_UNAVAILABLE` recovery per entrant for 2026-09-01T20:20Z.
+   That, not a settlement, is how Round 1 closes.
 2. Obtain an explicit named-human decision before scheduling the proposed
    `ONLINE_SHADOW` experiment for Round 2; rejection remains a valid result.
 3. Connect database-derived critical health alerts to an external paging
@@ -312,6 +344,47 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
    phases unrecoverable for any Round that had reached S1 - which is every Round
    that has a decision at all. Review the remaining fences for the same class of
    over-broad refusal before the next Season.
+
+11. Break the deadlock between the corporate-action gate and the planning
+   window before another Round is seeded. Round 1 could not have settled S1
+   even if the close capture had worked, and the reason is structural rather
+   than incidental.
+
+   `arena_corporate_action_phase_is_clear` evaluates
+   `SETTLE_S1_AND_PREPARE_S2` through `s2_session_date`. Two Liquid 100 members
+   went ex-dividend on 2026-09-01, the Round's S2 session: IBKR
+   (`6a2b5ebd-892c-4311-8d66-e62e82f67b5d`, rate `0.0875`, payable 2026-09-14)
+   and GS (`cc56bfbb-0f9c-4148-9fce-89fc9f765931`, rate `5`, payable
+   2026-09-29). Both were evidenced `COMPLETE`, so the gate came down to
+   account preparation. Migration `202608290046` exposes preparation only from
+   `ex_open_at - 30 minutes`, deliberately: entitlement is the last pre-ex-open
+   account state, and an earlier freeze would capture stale holdings. So the
+   gate could not clear before 2026-09-01T13:00Z - confirmed by evaluating
+   `get_corporate_action_account_work` at 12:55Z (no items) and 13:05Z (16).
+   But `plannedAt` must precede `plannedTradeDate`, so settlement had to finish
+   before 2026-09-01T00:00Z. The two windows do not overlap. Any Round whose S2
+   session date carries an ex-date on a universe member is deadlocked the same
+   way, and on a 100-symbol universe that will recur constantly.
+
+   Two changes, both before the next `PROVISION_NEXT_ROUND`, since a seeded
+   Round inherits its deadlines:
+
+   - Scope the gate by interpretation. `CASH_DIVIDEND` should be evaluated
+     through `s1_session_date` for this phase: a dividend changes no share
+     count, its cash lands on the payable date, and the S2 plan's arithmetic
+     does not depend on it. The entitlement guarantee survives, because
+     `FINALIZE_ACCEPTED_TARGET_CYCLE` still evaluates through `s2_session_date`
+     and still requires the preparation. `SPLIT` must stay at
+     `s2_session_date`: a split changes the share counts the frozen plan is
+     written in, so planning across an unapplied one would be wrong. A split
+     on the S2 session date therefore remains a hard stop, which is correct.
+   - Correct the phase deadline. `deadline_at` is currently `s2_open_at`, but
+     the planning rule makes `s2_session_date` at `00:00Z` the last instant the
+     phase can legally succeed. The current deadline promises roughly seventeen
+     hours of runway, thirteen of which do not exist. This is what made a
+     fifteen-minute close-capture failure fatal without anyone seeing it: the
+     Round was already unrecoverable at midnight, and the queue only reported
+     it at 13:07Z the next day, twenty-three minutes before S2 open.
 
 The exact startup, deadline, recovery, and readiness procedure is in
 [arena-runbook.md](arena-runbook.md).
