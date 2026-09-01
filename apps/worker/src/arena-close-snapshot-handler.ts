@@ -2,6 +2,7 @@ import {
   fetchAlpacaDailyBars,
   type AlpacaMarketDataConfig,
   type AlpacaMarketDelivery,
+  type MarketSourceVersion,
 } from "./market-data.js";
 import type {
   ArenaCloseSnapshotStage,
@@ -9,9 +10,19 @@ import type {
 } from "./arena-close-snapshot-repository.js";
 import type { ArenaWorkHandler } from "./arena-work-runner.js";
 
+/**
+ * The daily-bars source version frozen with the Round's decision snapshot.
+ * The evidence fence admits a close only under this exact source, so it is
+ * Round state rather than deployment configuration.
+ */
+export interface ArenaCloseSnapshotFrozenSource extends MarketSourceVersion {
+  readonly sourceVersionId: string;
+}
+
 export interface ArenaCloseSnapshotRoundSchedule {
   readonly roundId: string;
   readonly symbols: readonly string[];
+  readonly source: ArenaCloseSnapshotFrozenSource;
   readonly s1SessionDate: string;
   readonly s1CloseAvailableAt: string;
   readonly s2SessionDate: string;
@@ -73,7 +84,15 @@ export function createArenaCloseSnapshotHandler(input: {
 
     const delivery = await fetchAlpacaDailyBars(Object.freeze({
       ...input.config,
+      // Deployment configuration names the route this Worker ingests with
+      // today. A Round admits a close only under the source version frozen
+      // with its decision snapshot, so the Round's own route wins here.
       symbols: schedule.symbols,
+      dataUrl: schedule.source.endpointBaseUrl,
+      feed: schedule.source.feed,
+      licenseScope: schedule.source.licenseScope,
+      sourceVersionKey: schedule.source.versionKey,
+      sourceEffectiveFrom: schedule.source.effectiveFrom,
     }), {
       targetSessionDate: timing.sessionDate,
       endAt: timing.availableAt,
@@ -83,6 +102,7 @@ export function createArenaCloseSnapshotHandler(input: {
       ...(input.now === undefined ? {} : { now: input.now }),
       signal,
     });
+    assertFrozenMarketSource(delivery.source, schedule.source);
     const persisted = await input.store.persist(item.roundId, stage, delivery);
     assertSharedIdentity(persisted, item.roundId, stage);
     return Object.freeze({
@@ -91,6 +111,32 @@ export function createArenaCloseSnapshotHandler(input: {
       manifestSha256: persisted.manifestSha256,
     });
   };
+}
+
+const FROZEN_SOURCE_FIELDS = Object.freeze([
+  "provider", "dataset", "versionKey", "endpointBaseUrl", "feed", "adjustment",
+  "timeframe", "normalizerVersion", "licenseScope", "configSha256",
+  "effectiveFrom",
+] as const satisfies readonly (keyof MarketSourceVersion)[]);
+
+/**
+ * Names every field that keeps a capture out of the Round's frozen source.
+ * The database fence can only report that the close missed the fence, so the
+ * difference has to be observable here.
+ */
+export function assertFrozenMarketSource(
+  captured: MarketSourceVersion,
+  frozen: ArenaCloseSnapshotFrozenSource,
+): void {
+  const differences = FROZEN_SOURCE_FIELDS
+    .filter((field) => captured[field] !== frozen[field])
+    .map((field) => `${field} ${captured[field]} is not ${frozen[field]}`);
+  if (differences.length > 0) {
+    throw new TypeError(
+      `captured close source does not match the Round source version `
+      + `${frozen.sourceVersionId}: ${differences.join("; ")}`,
+    );
+  }
 }
 
 function stageForPhase(phase: string): ArenaCloseSnapshotStage {
