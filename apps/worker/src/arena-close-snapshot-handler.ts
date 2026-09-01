@@ -118,9 +118,14 @@ export function createArenaCloseSnapshotHandler(input: {
  * The S2 plan's plannedAt is the sealed evidence instant, and a plan may not
  * be written on its own trade date. A close first sealed on the S2 session
  * date can therefore never carry a legal plan, however healthy the capture
- * looks. Refusing here costs one provider request and leaves no unusable
- * snapshot behind; the alternative is discovering it at settlement, hours
- * later, against evidence that already looks bound and correct.
+ * looks.
+ *
+ * This is the cheap half of that boundary: it runs before the provider request
+ * so a doomed capture costs nothing and names its reason. It cannot be the
+ * whole of it - `sealed_at` is assigned by the database after the request
+ * returns, so a capture that crosses midnight would still pass here. The
+ * authoritative refusal is in `register_arena_round_close_snapshot`, against
+ * the instant actually recorded.
  *
  * Reuse is never refused: evidence sealed in time stays legal no matter when
  * a later entrant item consumes it.

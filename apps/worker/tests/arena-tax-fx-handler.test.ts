@@ -124,3 +124,37 @@ describe("Arena tax-FX close handler", () => {
     );
   });
 });
+
+describe("Arena disposition FX planning boundary", () => {
+  const config: EcbFxConfig = {
+    sourceUrl: "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml",
+  };
+
+  it("refuses FX first observed on the S2 session date", async () => {
+    const repository = store(null);
+    const fetchImplementation = vi.fn();
+    const handler = createArenaTaxFxHandler({
+      config,
+      store: repository,
+      fetchImplementation: fetchImplementation as never,
+      now: () => new Date("2026-09-01T11:59:00.000Z"),
+    });
+
+    await expect(handler(item, new AbortController().signal))
+      .rejects.toThrow(/cannot plan S2 orders for 2026-09-01/);
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(repository.persist).not.toHaveBeenCalled();
+  });
+
+  it("still reuses FX observed before the S2 session date", async () => {
+    const repository = store(existing);
+    const handler = createArenaTaxFxHandler({
+      config,
+      store: repository,
+      now: () => new Date("2026-09-01T11:59:00.000Z"),
+    });
+
+    await expect(handler(item, new AbortController().signal))
+      .resolves.toMatchObject({ outcome: "SHARED_TAX_FX_REUSED" });
+  });
+});

@@ -381,23 +381,32 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
      `s2_session_date`: a split changes the share counts the frozen plan is
      written in, so planning across an unapplied one would be wrong. A split
      on the S2 session date therefore remains a hard stop, which is correct.
-   - Enforce the evidence boundary where it is decidable, and leave the queue
-     deadlines alone. Because `plannedAt` is the sealed evidence instant, a
-     Round is dead once its S1 close is first sealed on the S2 calendar date -
-     but that is not the same as an item finishing late. `CAPTURE_S1_CLOSE`
-     persists the shared close and disposition FX before its entrant-scoped
-     item completes, and every later item reuses those rows, so an item that
-     completes after midnight over evidence sealed before it is still legal.
-     Expiring either phase at midnight would cancel exactly that case - a lost
-     completion RPC, or a sibling entrant not yet processed - and a cancelled
-     prerequisite can never be claimed again, because the claim requires every
-     prerequisite to be `SUCCEEDED`. Both phases therefore keep `s2_open_at`,
-     which is also the bound `register_arena_s1_checkpoint` and the Worker's
-     `s1SettledAt >= s2OpenAt` check already use. The close handler now refuses
-     to seal a close on or after the S2 session date, naming why, so the
-     morning recovery that produced snapshot seventeen on 2026-09-01 would have
-     been refused outright instead of binding evidence that no settlement could
-     use.
+   - Enforce the evidence boundary on the rows themselves, and leave the queue
+     deadlines alone. Because `plannedAt` is `max(close.sealedAt,
+     dispositionFx.visibleAt)`, a Round is dead once either S1 evidence row is
+     first created on the S2 calendar date - but that is not the same as an
+     item finishing late. `CAPTURE_S1_CLOSE` persists both rows before its
+     entrant-scoped item completes, and every later item reuses them, so an
+     item that completes after midnight over evidence created before it is
+     still legal. Expiring either phase at midnight would cancel exactly that
+     case - a lost completion RPC, or a sibling entrant not yet processed - and
+     a cancelled prerequisite can never be claimed again, because the claim
+     requires every prerequisite to be `SUCCEEDED`. Both phases therefore keep
+     `s2_open_at`, the bound `register_arena_s1_checkpoint` and the Worker's
+     `s1SettledAt >= s2OpenAt` check already use.
+
+     Only the database can hold the boundary: `market_snapshot.sealed_at` is
+     assigned after the provider request returns, so a capture that starts
+     before midnight and finishes after it would otherwise bind an unusable
+     close. `register_arena_round_close_snapshot` and
+     `register_arena_round_tax_fx_reference` now refuse to create either S1 row
+     on or after the S2 session date, naming why. Both handlers keep a matching
+     pre-request refusal so a doomed capture costs no provider traffic, and
+     neither refuses reuse. The FX half matters on its own: a close reused from
+     an in-time seal does not rescue disposition FX first observed on the S2
+     date, because `plannedAt` takes the later of the two. The morning recovery
+     that produced snapshot seventeen on 2026-09-01 would have been refused
+     outright instead of binding evidence no settlement could use.
 
 The exact startup, deadline, recovery, and readiness procedure is in
 [arena-runbook.md](arena-runbook.md).

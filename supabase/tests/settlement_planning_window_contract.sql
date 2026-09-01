@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(6);
+select plan(9);
 
 select public.register_arena_season(
   'settlement-window-contract:season',
@@ -495,6 +495,116 @@ select is(
   false,
   'a split on the S2 session date holds S1 settlement, unlike a dividend'
 );
+
+-- Evidence that could never carry a legal S2 plan is refused where it is
+-- created. `sealed_at` is assigned by the database after the provider request,
+-- so a capture that starts before midnight and finishes after it can only be
+-- caught here.
+insert into public.market_snapshot (
+  snapshot_id, idempotency_key, source_version_id, snapshot_kind,
+  cutoff_at, target_session_date, symbols, selection_policy,
+  manifest_schema, manifest_sha256, sealed_at
+) values (
+  'e9900000-0000-4000-8000-000000000001',
+  'settlement-window-contract:late-close',
+  'e9200000-0000-4000-8000-000000000001', 'market_close',
+  '2026-08-31T20:35:00.000Z', '2026-08-31', array['LULU'],
+  'settlement-window-contract', 'twofold.market_snapshot/v2', repeat('7', 64),
+  '2026-09-01T12:03:11.000Z'
+);
+set local role service_role;
+select throws_ok(
+  $$select public.register_arena_round_close_snapshot(
+    'settlement-window-contract:late-close',
+    'e9500000-0000-4000-8000-000000000001', 'S1_CLOSE',
+    'e9900000-0000-4000-8000-000000000001', 'settlement-window-contract'
+  )$$,
+  '22023',
+  'S1 close sealed on or after the S2 session date cannot carry an S2 plan',
+  'a close sealed on the S2 session date is refused where it is bound'
+);
+reset role;
+
+-- The disposition FX is the other half of the same instant: plannedAt is the
+-- maximum of the close seal and the FX visibility, so a reused close does not
+-- rescue FX first observed on the S2 session date. The two cases use different
+-- Rounds because a Round holds one FX reference per stage: without the fix the
+-- refused one registers instead, and one Round could not show both outcomes.
+create temporary table settlement_window_fx on commit drop as
+select
+  '{"authority":"ECB_REFERENCE_CROSS","availableAt":"' || instant
+    || '","cnyPerUsd":"6.719730941704",'
+    || '"derivation":"EUR_CNY_DIV_EUR_USD_HALF_UP_12",'
+    || '"effectiveDate":"2026-08-31","eurToCny":"7.7922",'
+    || '"eurToUsd":"1.1596","observedAt":"' || instant
+    || '","schema":"twofold.ecb_usd_cny_reference_cross/v1",'
+    || '"status":"ESTIMATED"}' as canonical_json,
+  instant,
+  artifact_sha
+from (values
+  ('2026-09-01T12:03:08.464Z', repeat('7', 64)),
+  ('2026-08-31T20:25:00.000Z', repeat('a', 64))
+) as fixture(instant, artifact_sha);
+grant select on settlement_window_fx to service_role;
+
+insert into public.artifact_metadata (
+  artifact_id, idempotency_key, season_id, artifact_kind, storage_bucket,
+  object_path, content_type, byte_size, sha256, created_by, metadata
+)
+select
+  case when fx.instant like '2026-09-01%'
+    then 'e9a00000-0000-4000-8000-000000000001'::uuid
+    else 'e9a00000-0000-4000-8000-000000000002'::uuid end,
+  'settlement-window-contract:ecb:' || fx.instant,
+  case when fx.instant like '2026-09-01%'
+    then 'e9800000-0000-4000-8000-000000000001'::uuid
+    else 'e9100000-0000-4000-8000-000000000001'::uuid end,
+  'official_tax_fx_rate', 'twofold-private-artifacts',
+  'competition-sources/ecb/' || fx.artifact_sha || '.json',
+  'application/json', 1, fx.artifact_sha, 'settlement-window-contract',
+  jsonb_build_object(
+    'schema', 'twofold.ecb_reference_source/v1',
+    'sourceUrl',
+      'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml',
+    'effectiveDate', '2026-08-31',
+    'observedAt', fx.instant,
+    'rawBodySha256', repeat('b', 64)
+  )
+from settlement_window_fx as fx;
+
+set local role service_role;
+select throws_ok(
+  format(
+    $$select public.register_arena_round_tax_fx_reference(
+      'settlement-window-contract:fx:late',
+      'e9850000-0000-4000-8000-000000000001', 'S1_DISPOSITION',
+      'e9a00000-0000-4000-8000-000000000001', %L, %L, %L, %L,
+      'settlement-window-contract'
+    )$$,
+    repeat('7', 64), repeat('b', 64), fx.canonical_json,
+    encode(extensions.digest(convert_to(fx.canonical_json, 'UTF8'), 'sha256'),
+      'hex')
+  ),
+  '22023',
+  'S1 disposition FX first visible on or after the S2 session date cannot carry an S2 plan',
+  'disposition FX first visible on the S2 session date is refused too'
+)
+from settlement_window_fx as fx where fx.instant like '2026-09-01%';
+select is(
+  (public.register_arena_round_tax_fx_reference(
+    'settlement-window-contract:fx:intime',
+    'e9500000-0000-4000-8000-000000000001', 'S1_DISPOSITION',
+    'e9a00000-0000-4000-8000-000000000002', repeat('a', 64), repeat('b', 64),
+    fx.canonical_json,
+    encode(extensions.digest(convert_to(fx.canonical_json, 'UTF8'), 'sha256'),
+      'hex'),
+    'settlement-window-contract'
+  )->>'stage'),
+  'S1_DISPOSITION',
+  'disposition FX observed before the S2 session date is still accepted'
+)
+from settlement_window_fx as fx where fx.instant like '2026-08-31%';
+reset role;
 
 select * from finish();
 rollback;

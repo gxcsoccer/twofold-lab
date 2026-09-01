@@ -14,16 +14,22 @@
 -- share counts a frozen plan is written in, so it keeps the wider horizon and
 -- a split on the S2 session date remains a hard stop.
 --
--- The deadline is deliberately left alone. Legality is decided by the sealed
--- evidence instant, not by queue completion: CAPTURE_S1_CLOSE persists the
--- shared close and disposition FX before its entrant-scoped item completes,
--- and every later item reuses those rows, so an item that completes after
--- midnight over evidence sealed before it is still legal. Expiring the queue
--- item at midnight would cancel exactly that case - a lost completion RPC, or
--- a sibling entrant not yet processed - and a cancelled prerequisite can never
--- be claimed again. The boundary belongs on the evidence, and is enforced in
--- the close handler, which now refuses to seal a close that could never carry
--- a legal S2 plan.
+-- The queue deadlines are deliberately left alone. Legality is decided by the
+-- sealed evidence instant, not by queue completion: CAPTURE_S1_CLOSE persists
+-- the shared close and disposition FX before its entrant-scoped item
+-- completes, and every later item reuses those rows, so an item that completes
+-- after midnight over evidence sealed before it is still legal. Expiring the
+-- queue item at midnight would cancel exactly that case - a lost completion
+-- RPC, or a sibling entrant not yet processed - and a cancelled prerequisite
+-- can never be claimed again.
+--
+-- The boundary belongs on the evidence rows, and only the database can hold
+-- it: `sealed_at` is assigned here, after the provider request, so a capture
+-- that starts before midnight and finishes after it would otherwise bind an
+-- unusable close. Both S1 evidence rows now refuse to be created on or after
+-- the S2 session date, naming why. Reuse is untouched - each registration
+-- returns an existing binding before these checks, and evidence sealed in time
+-- stays legal however late it is consumed.
 
 begin;
 
@@ -136,6 +142,52 @@ begin
            )
         )
   );
+end;
+$$;
+
+do $$
+declare
+  v_close regprocedure := 'public.register_arena_round_close_snapshot('
+    || 'text, uuid, text, uuid, text)';
+  v_fx regprocedure := 'public.register_arena_round_tax_fx_reference('
+    || 'text, uuid, text, uuid, text, text, text, text, text)';
+  v_source text;
+  v_close_old text := E'  if v_snapshot.snapshot_kind <> ''market_close''\n';
+  v_close_new text :=
+    E'  if p_stage = ''S1_CLOSE''\n'
+    || E'    and v_snapshot.sealed_at\n'
+    || E'      >= (v_round.s2_session_date::timestamp) at time zone ''UTC''\n'
+    || E'  then\n'
+    || E'    raise exception ''S1 close sealed on or after the S2 session date'
+    || E' cannot carry an S2 plan''\n'
+    || E'      using errcode = ''22023'';\n'
+    || E'  end if;\n'
+    || E'  if v_snapshot.snapshot_kind <> ''market_close''\n';
+  v_fx_old text := E'  if v_observed_at < v_stage_available_at\n';
+  v_fx_new text :=
+    E'  if p_stage = ''S1_DISPOSITION''\n'
+    || E'    and v_available_at\n'
+    || E'      >= (v_round.s2_session_date::timestamp) at time zone ''UTC''\n'
+    || E'  then\n'
+    || E'    raise exception ''S1 disposition FX first visible on or after the'
+    || E' S2 session date cannot carry an S2 plan''\n'
+    || E'      using errcode = ''22023'';\n'
+    || E'  end if;\n'
+    || E'  if v_observed_at < v_stage_available_at\n';
+begin
+  select pg_get_functiondef(v_close) into v_source;
+  if position(v_close_old in v_source) = 0 then
+    raise exception 'could not locate the close evidence fence'
+      using errcode = '55000';
+  end if;
+  execute replace(v_source, v_close_old, v_close_new);
+
+  select pg_get_functiondef(v_fx) into v_source;
+  if position(v_fx_old in v_source) = 0 then
+    raise exception 'could not locate the tax-FX settlement window check'
+      using errcode = '55000';
+  end if;
+  execute replace(v_source, v_fx_old, v_fx_new);
 end;
 $$;
 
