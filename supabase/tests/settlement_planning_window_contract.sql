@@ -236,16 +236,18 @@ select is(
   false,
   'the same dividend still holds finalization until the account prepares it'
 );
--- The S2 plan's plannedAt is the sealed evidence instant, not a wall clock, so
--- settlement stays legal overnight and keeps the full window its arrival guard
--- allows. The close is what cannot be late: evidence sealed on the S2 date can
--- never produce a legal plan.
+-- Neither deadline moves. Legality is decided by the sealed evidence instant,
+-- not by queue completion: both phases persist or reuse shared evidence, and
+-- an item completing after midnight over evidence sealed before it is still
+-- legal. Cancelling either at midnight would destroy that overnight recovery,
+-- and a cancelled prerequisite can never be claimed again. The evidence
+-- boundary is enforced in the close handler instead.
 select is(
   (select deadline_at from public.arena_work_item
     where round_id = 'e9500000-0000-4000-8000-000000000001'
       and phase = 'CAPTURE_S1_CLOSE'),
-  '2026-09-01T00:00:00.000Z'::timestamptz,
-  'the S1 close expires when its evidence stops being usable'
+  '2026-09-01T13:30:00.000Z'::timestamptz,
+  'the S1 close keeps the completion and reuse window it already had'
 );
 select is(
   (select deadline_at from public.arena_work_item
