@@ -206,15 +206,19 @@ export function parseFrozenMarketSource(
 ): ArenaCloseSnapshotFrozenSource {
   const sourceVersionId = uuid(row.source_version_id, "source_version_id");
   const field = (name: string) => `Round source version ${sourceVersionId} ${name}`;
+  // The close fence admits exactly one route, SIP included: an IEX-frozen
+  // Round would otherwise parse, fetch and seal before registration refused
+  // it, which is the failure this parser exists to prevent.
   if (
     row.provider !== "alpaca"
     || row.dataset !== "us_stock_daily_bars"
+    || row.feed !== "sip"
     || row.adjustment !== "raw"
     || row.timeframe !== "1Day"
-    || (row.feed !== "sip" && row.feed !== "iex")
   ) {
     throw new TypeError(
-      `Round source version ${sourceVersionId} is not an Alpaca daily-bars route`,
+      `Round source version ${sourceVersionId} is not the Alpaca SIP `
+      + "daily-bars route the close fence admits",
     );
   }
   return Object.freeze({
@@ -226,7 +230,7 @@ export function parseFrozenMarketSource(
       row.endpoint_base_url,
       field("endpoint_base_url"),
     ),
-    feed: row.feed,
+    feed: "sip",
     adjustment: "raw",
     timeframe: "1Day",
     normalizerVersion: text(row.normalizer_version, field("normalizer_version")),

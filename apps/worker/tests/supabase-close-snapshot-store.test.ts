@@ -62,6 +62,10 @@ describe("Round frozen market source", () => {
 
   it("refuses a route the close fence would never admit", () => {
     expect(() => parseFrozenMarketSource({ ...row, timeframe: "1Min" }))
-      .toThrow(/is not an Alpaca daily-bars route/);
+      .toThrow(/is not the Alpaca SIP daily-bars route/);
+    // The fence compares the feed, so an IEX Round has to fail before a
+    // snapshot is sealed rather than at registration.
+    expect(() => parseFrozenMarketSource({ ...row, feed: "iex" }))
+      .toThrow(/is not the Alpaca SIP daily-bars route/);
   });
 });
