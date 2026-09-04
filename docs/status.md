@@ -1,13 +1,13 @@
 # Implementation status
 
-Updated: 2026-09-01 (Asia/Shanghai).
+Updated: 2026-09-04 (Asia/Shanghai).
 
 ## Current production outcome
 
-`private-us-liquid-100-s4` is the active production Season behind the
-authenticated Vercel dashboard. It is the first clean activation in which both
-the root-only and orchestrated DeepSeek entrants completed a real 100-symbol
-decision and froze deterministic S1 plans.
+`private-us-liquid-100-s4` is the only operationally active production Season
+behind the authenticated Vercel dashboard. Superseded s1-s3 Seasons remain
+immutable evidence and are excluded from live work through audited retirement
+records.
 
 - Season ID: `1486ba8e-47ae-5774-ba44-5c26f9359eeb`.
 - Round 1 ID: `d83eff85-da7b-5e07-81d6-d4feaf4d9839`.
@@ -20,14 +20,22 @@ decision and froze deterministic S1 plans.
   cash. Both opening Liquidation NAV values are `$18,118.66` and rank 1.
 - The accounts were initialized at `2026-08-29T21:20:32Z`, before the immutable
   Season/decision opening at `2026-08-29T21:28:55.699Z`.
-- Round 1 has two entrant seats and all 16 items in its eight-phase durable DAG.
-- The static start gate reports `READY_FOR_S1`: two accepted decisions, two
-  frozen S1 plans, four successful pre-S1 work items, a live production Worker,
-  the correct active Season, and no operational alerts.
-- Round 1 ended without a single trade. No fill settled, no S1 checkpoint and
-  no S2 plan exist, both accounts still hold the genesis position, and the
-  `OPENING` pair above remains their only valuation. Operations item 1 records
-  why, and item 11 records what must change before another Round is seeded.
+- Round 1 closed through the explicit no-trade path after an S1 close captured
+  too late to create a legal S2 plan. Its shared S2 close is snapshot
+  `07014296-ee86-4f9b-9c7a-2f5851ce5c5f`, sealed at
+  `2026-09-01T20:39:15.419Z`.
+- Both entrants now have an `S2_CLOSE` valuation of `$17,697.17`, a
+  `0.976737242158` return multiple, and rank 1 as an exact tie. No fill settled;
+  both ledger heads remain at sequence 0 with their original genesis hashes.
+- Round 2 (`c0f322d4-2be8-87eb-8002-6fc70c5f34cb`) was provisioned from that
+  close. Its decision tasks were safely rearmed after a cross-Round frozen-
+  universe validation defect was fixed; no terminal result was rewritten.
+- Both repaired Round 2 invocations reached the model runtime, then ended with
+  `NO_ACCEPTED_SUBMISSION`: the root-only entrant emitted an invalid tool call
+  and the orchestrated entrant exhausted its response tokens before delegating
+  or submitting. These are non-retryable contestant outcomes, so operations did
+  not grant another attempt. Their no-trade requests are scheduled for the real
+  S2 close boundary on 2026-09-08.
 
 No live-broker capability exists. Every order and fill is simulated.
 
@@ -107,6 +115,15 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
   only when no accepted submission, downstream work, or deadline conflict exists.
 - Migration 056 allows one immutable Bundle artifact to be reused across Seasons
   only when the current Season entrant freezes the exact same Bundle SHA-256.
+- Operational retirement is an append-only overlay: it removes superseded
+  Seasons from symbol and corporate-action work without deleting their facts.
+- No-trade claims now wait for shared S2 close evidence and require the source
+  task to remain terminal, with no accepted submission or existing S2
+  valuation. Exhausted recovery can be rearmed only through a service-only,
+  append-only audited RPC.
+- One Season-frozen universe may be reused by later Rounds when its research
+  date is not in the future, its freeze predates the snapshot cutoff, and its
+  member set exactly matches the bound snapshot.
 - Earlier s1-s3 activations remain immutable evidence. s1 exposed account
   initialization after decision time; s2 exposed cross-Season artifact
   assumptions and the 8,192 root-output ceiling; s3 exposed the fixed 120,000
@@ -169,28 +186,31 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
 
 ## Verification
 
-- 110 Core, Worker, and Dashboard test files pass: 514 tests.
+- The Worker suite passes all 83 files and 338 tests; Worker typecheck and
+  production build pass.
 - Core, DSH Bundle, Worker, and Dashboard production TypeScript builds pass.
 - The clean Vercel production build passes package builds, Next.js compile,
   typecheck, page generation, output tracing, and deployment.
-- Relevant remote pgTAP contracts pass, including Round readiness, v2 market
-  evidence, v2 stage registration, failed-work recovery, and cross-Season Bundle
-  reuse.
-- The production start gate returned `ready: true` with 100 members, 2 accepted
-  decisions, 2 frozen S1 plans, all 4 pre-S1 tasks successful, and no alerts.
+- Relevant remote pgTAP contracts pass, including the 24-test operational
+  recovery/retirement contract, tick observability, valuation timestamp
+  precision, and corporate-action work enrichment.
+- Production now reconciles exactly 100 active symbols. The old Round 1
+  terminal-work alert cleared after both audited recoveries succeeded. The
+  alert is currently present again for the two genuine Round 2 Agent failures
+  until their scheduled S2 no-trade valuations complete; the explicit RCL
+  unsupported corporate-action policy alert also remains intentionally open.
 - ego-lite verified the authenticated desktop and 390px mobile Season views, both
   real decision pages, the orchestrator descendant tree, accepted allocations,
   and the production `/evolution` P1 evidence section with zero document-level
   horizontal overflow.
-- Migrations through 060 are aligned locally and remotely; the 63-test Arena
-  decision/evolution contract passes against production Supabase.
-- Current production deployment is `dpl_HrpdfYZSTspA1ZAmVBdXkjziKxJ8` and owns
-  `https://twofold-lab-neon.vercel.app`.
-- The post-deploy production cron invocation returned HTTP 200.
+- Migrations through `202609040004` are aligned locally and remotely.
+- Verified recovery deployment `dpl_6ramKtqAwxy4QgYQgosFFTMyr6Wg` reached
+  `Ready` and owned `https://twofold-lab-neon.vercel.app`.
 
-## Remaining operations
+## Incident record and remaining operations
 
-1. Round 1 is over and produced nothing to rank. Three separate defects fired
+1. Round 1's trade path ended without settlement and was ultimately ranked
+   through audited no-trade recovery on 2026-09-04. Three separate defects fired
    in sequence, each in a phase reaching production for the first time. The
    prediction recorded here on 2026-08-30 - that a comparable first-run defect
    in the S1 close or settlement paths was likely rather than surprising - held
@@ -348,8 +368,8 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
    that has a decision at all. Review the remaining fences for the same class of
    over-broad refusal before the next Season.
 
-11. Break the deadlock between the corporate-action gate and the planning
-   window before another Round is seeded. Round 1 could not have settled S1
+11. Resolved before Round 2 was seeded: break the deadlock between the
+   corporate-action gate and the planning window. Round 1 could not have settled S1
    even if the close capture had worked, and the reason is structural rather
    than incidental.
 

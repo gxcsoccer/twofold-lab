@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(19);
+select plan(29);
 
 select has_table('public', 'arena_season', 'Arena Season identity is durable');
 select has_table('public', 'season_entrant', 'Season entrant identity is durable');
@@ -27,6 +27,20 @@ select has_function(
     'text', 'text', 'text', 'jsonb', 'text'
   ],
   'entrant registration has one audited service boundary'
+);
+select has_table(
+  'public', 'arena_season_retirement',
+  'superseded Seasons leave live operations through append-only evidence'
+);
+select has_function(
+  'public', 'retire_arena_season',
+  array['uuid', 'text', 'text', 'timestamp with time zone'],
+  'Season retirement has one audited service boundary'
+);
+select has_function(
+  'public', 'get_active_arena_season_symbols',
+  array['timestamp with time zone'],
+  'the Worker reads one retirement-aware active universe contract'
 );
 
 select public.register_run_manifest(
@@ -77,6 +91,60 @@ select public.register_season_entrant(
   'twofold-orchestrator', 'deepseek-official', 'deepseek-v4-pro',
   'ORCHESTRATED', '{"track":"MAIN_ARENA"}',
   'season-identity-contract'
+);
+reset role;
+
+set local role service_role;
+select is(
+  (public.retire_arena_season(
+    'a2000000-0000-4000-8000-000000000001',
+    'superseded contract Season', 'season-identity-operator',
+    '2026-09-01T00:00:00.000Z'
+  )->>'schema'),
+  'twofold.arena_season_retirement/v1',
+  'retirement returns an explicit versioned audit contract'
+);
+select is(
+  (public.retire_arena_season(
+    'a2000000-0000-4000-8000-000000000001',
+    'superseded contract Season', 'season-identity-operator',
+    '2026-09-01T00:00:00.000Z'
+  )->>'seasonId'),
+  'a2000000-0000-4000-8000-000000000001',
+  'an exact retirement retry is idempotent'
+);
+select throws_ok(
+  $$select public.retire_arena_season(
+    'a2000000-0000-4000-8000-000000000001',
+    'changed explanation', 'season-identity-operator',
+    '2026-09-01T00:00:00.000Z'
+  )$$,
+  '23505', 'Arena Season retirement identity was reused',
+  'a retirement retry cannot rewrite its operator explanation'
+);
+reset role;
+select throws_ok(
+  $$update public.arena_season_retirement
+       set reason = 'mutated explanation'
+     where season_id = 'a2000000-0000-4000-8000-000000000001'$$,
+  '55000',
+  'arena_season_retirement is append-only; append a compensating or superseding record instead',
+  'retirement evidence is immutable even for the owner'
+);
+select ok((
+  select reason = 'superseded contract Season'
+     and retired_by = 'season-identity-operator'
+     and retired_at = '2026-09-01T00:00:00.000Z'
+    from public.arena_season_retirement
+   where season_id = 'a2000000-0000-4000-8000-000000000001'
+), 'retirement retains exact operator, reason, and effective time');
+set local role service_role;
+select is(
+  (public.get_active_arena_season_symbols(
+    '2026-09-02T00:00:00.000Z'
+  )->>'schema'),
+  'twofold.active_arena_season_symbols/v1',
+  'active symbols use one explicit retirement-aware API contract'
 );
 reset role;
 
@@ -192,6 +260,14 @@ select throws_ok(
   )$$,
   '42501', null,
   'anonymous callers cannot register a Season'
+);
+select throws_ok(
+  $$select public.retire_arena_season(
+    'a2000000-0000-4000-8000-000000000001',
+    'anonymous rewrite', 'anon', now()
+  )$$,
+  '42501', null,
+  'anonymous callers cannot retire a private Season'
 );
 reset role;
 

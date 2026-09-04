@@ -30,7 +30,7 @@ describe("corporate-action account reconciler", () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
-  it("completes exact mutations but reports any fail-closed account", async () => {
+  it("completes mutations and leaves policy-blocked work to health alerts", async () => {
     const dueWork = {
       ...emptyWork,
       items: [{}],
@@ -55,7 +55,7 @@ describe("corporate-action account reconciler", () => {
 
     await expect(runner.tick(new AbortController().signal)).resolves
       .toBe("completed");
-    await expect(runner.tick(new AbortController().signal)).resolves.toBe("failed");
+    await expect(runner.tick(new AbortController().signal)).resolves.toBe("idle");
     expect(reconcile).toHaveBeenCalledWith(
       dueWork,
       "worker:test",

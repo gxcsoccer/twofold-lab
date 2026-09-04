@@ -15,18 +15,6 @@ interface SourceVersionRow {
   readonly source_version_id: string;
 }
 
-interface SeasonRow {
-  readonly season_id: string;
-}
-
-interface RoundRow {
-  readonly decision_snapshot_id: string;
-}
-
-interface SnapshotRow {
-  readonly symbols: unknown;
-}
-
 export class SupabaseCorporateActionStore implements CorporateActionScanStore {
   readonly #client: SupabaseClient;
   readonly #workerId: string;
@@ -59,44 +47,31 @@ export class SupabaseCorporateActionStore implements CorporateActionScanStore {
     if (!Number.isFinite(instant.getTime()) || instant.toISOString() !== asOf) {
       throw new TypeError("active-season symbol as-of must be an ISO instant");
     }
-    const seasons = await this.#client.from("arena_season")
-      .select("season_id")
-      .lte("opens_at", asOf)
-      .gt("closes_at", asOf);
-    if (seasons.error !== null) {
-      throw new Error(`load active Arena seasons failed: ${seasons.error.message}`);
+    const response = await this.#client.rpc(
+      "get_active_arena_season_symbols",
+      { p_as_of: asOf },
+    );
+    if (response.error !== null) {
+      throw new Error(
+        `load active Arena Season symbols failed: ${response.error.message}`,
+      );
     }
-    const seasonIds = (seasons.data as SeasonRow[]).map((row) => row.season_id);
-    if (seasonIds.length === 0) return Object.freeze([]);
-    const rounds = await this.#client.from("arena_round")
-      .select("decision_snapshot_id")
-      .in("season_id", seasonIds);
-    if (rounds.error !== null) {
-      throw new Error(`load active Arena Round universes failed: ${rounds.error.message}`);
+    if (response.data === null || typeof response.data !== "object"
+      || Array.isArray(response.data)) {
+      throw new TypeError("active Arena Season symbols returned a non-object");
     }
-    const snapshotIds = [...new Set((rounds.data as RoundRow[])
-      .map((row) => row.decision_snapshot_id))];
-    if (snapshotIds.length === 0) return Object.freeze([]);
-    const snapshots = await this.#client.from("market_snapshot")
-      .select("symbols")
-      .in("snapshot_id", snapshotIds);
-    if (snapshots.error !== null) {
-      throw new Error(`load active market snapshots failed: ${snapshots.error.message}`);
+    const value = response.data as Record<string, unknown>;
+    if (value.schema !== "twofold.active_arena_season_symbols/v1"
+      || value.asOf !== asOf || !Array.isArray(value.symbols)) {
+      throw new TypeError("active Arena Season symbols contract is invalid");
     }
-    const symbols = new Set<string>();
-    for (const row of snapshots.data as SnapshotRow[]) {
-      if (!Array.isArray(row.symbols)) {
-        throw new TypeError("active market snapshot has no symbol universe");
+    const symbols = value.symbols.map((symbol) => {
+      if (typeof symbol !== "string") {
+        throw new TypeError("active Arena Season symbols contains a non-string");
       }
-      for (const symbol of row.symbols) {
-        if (typeof symbol !== "string") {
-          throw new TypeError("active market snapshot contains a non-string symbol");
-        }
-        symbols.add(symbol);
-      }
-    }
-    return Object.freeze([...symbols].sort((left, right) =>
-      left.localeCompare(right, "en")));
+      return symbol;
+    });
+    return Object.freeze(symbols);
   }
 
   async persist(
