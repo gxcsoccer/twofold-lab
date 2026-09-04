@@ -204,8 +204,8 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
   and the production `/evolution` P1 evidence section with zero document-level
   horizontal overflow.
 - Migrations through `202609040004` are aligned locally and remotely.
-- Current production deployment is `dpl_3PPwct79XPJ7MCbQRedWdqLVcfLe` and owns
-  `https://twofold-lab-neon.vercel.app`.
+- Verified recovery deployment `dpl_6ramKtqAwxy4QgYQgosFFTMyr6Wg` reached
+  `Ready` and owned `https://twofold-lab-neon.vercel.app`.
 
 ## Incident record and remaining operations
 
