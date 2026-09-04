@@ -6,7 +6,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(21);
+select plan(24);
 
 select has_table(
   'public', 'arena_no_trade_recovery_rearm',
@@ -43,6 +43,24 @@ select ok(
     'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
   ) like '%binding.stage = ''S2_CLOSE''%',
   'only the S2 close binding releases no-trade work'
+);
+select ok(
+  pg_get_functiondef(
+    'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
+  ) like '%source.status in (''FAILED'', ''CANCELED'')%',
+  'a reopened source task fences its old no-trade request'
+);
+select ok(
+  pg_get_functiondef(
+    'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
+  ) like '%accepted_target_submission%',
+  'an accepted decision fences no-trade recovery'
+);
+select ok(
+  pg_get_functiondef(
+    'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
+  ) like '%valuation.stage = ''S2_CLOSE''%',
+  'an existing close valuation fences duplicate no-trade recovery'
 );
 select ok(
   pg_get_functiondef(
