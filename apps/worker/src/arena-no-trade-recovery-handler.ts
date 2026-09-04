@@ -46,8 +46,8 @@ export function createArenaNoTradeRecoveryHandler(input: {
       || snapshot.sourceVersionId !== close.sourceVersionId
       || snapshot.manifestSha256 !== close.manifestSha256
       || snapshot.targetSessionDate !== close.sessionDate
-      || snapshot.cutoffAt !== close.cutoffAt
-      || snapshot.sealedAt !== close.sealedAt
+      || !sameInstant(snapshot.cutoffAt, close.cutoffAt)
+      || !sameInstant(snapshot.sealedAt, close.sealedAt)
     ) {
       throw new TypeError("sealed market snapshot does not match its shared S2 binding");
     }
@@ -75,4 +75,16 @@ export function createArenaNoTradeRecoveryHandler(input: {
     }
     return valuation;
   };
+}
+
+/**
+ * PostgREST returns timestamptz values with an explicit offset and may retain
+ * microseconds; the close-binding RPC deliberately publishes canonical
+ * millisecond ISO instants. Compare the represented millisecond while the
+ * immutable snapshot identity and manifest hash remain exact.
+ */
+function sameInstant(left: string, right: string): boolean {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  return Number.isFinite(leftTime) && leftTime === rightTime;
 }

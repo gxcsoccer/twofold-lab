@@ -157,6 +157,22 @@ describe("Arena no-trade recovery handler", () => {
     expect(material.scoreBase).toHaveBeenCalledWith(ids.season, ids.entrant);
   });
 
+  it("accepts equivalent PostgREST and RPC timestamp encodings", async () => {
+    const material = source({
+      marketSnapshot: vi.fn(async () => ({
+        ...snapshot,
+        cutoffAt: "2026-09-03T20:20:05+00:00",
+        sealedAt: "2026-09-03T20:20:06.000499+00:00",
+      })),
+    });
+    const handler = createArenaNoTradeRecoveryHandler({ source: material });
+
+    await expect(handler(item, new AbortController().signal)).resolves
+      .toMatchObject({
+        payload: { valuationAt: "2026-09-03T20:20:06.000Z" },
+      });
+  });
+
   it("fails closed when close binding and sealed snapshot diverge", async () => {
     const material = source({
       marketSnapshot: vi.fn(async () => ({ ...snapshot, manifestSha256: "d".repeat(64) })),
