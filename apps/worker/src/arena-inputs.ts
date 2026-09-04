@@ -563,11 +563,27 @@ function packetLiquidUniverse(
   snapshot: ArenaMarketSnapshot,
 ): Record<string, JsonValue> {
   const artifact = material.artifact;
+  const artifactAsOf = calendarDateEpoch(
+    artifact.asOfSessionDate,
+    "liquid universe as-of session date",
+  );
+  const snapshotAsOf = calendarDateEpoch(
+    snapshot.targetSessionDate,
+    "market snapshot target session date",
+  );
+  const frozenAt = timestampEpoch(
+    artifact.frozenAt,
+    "liquid universe frozen timestamp",
+  );
+  const cutoffAt = timestampEpoch(
+    snapshot.cutoffAt,
+    "market snapshot cutoff timestamp",
+  );
   const memberSymbols = artifact.members.map((member) => member.symbol).sort();
   const snapshotSymbols = [...snapshot.symbols].sort();
   if (
-    artifact.asOfSessionDate > snapshot.targetSessionDate
-    || artifact.frozenAt > snapshot.cutoffAt
+    artifactAsOf > snapshotAsOf
+    || frozenAt > cutoffAt
     || memberSymbols.length !== snapshotSymbols.length
     || memberSymbols.some((symbol, index) => symbol !== snapshotSymbols[index])
   ) throw new TypeError("liquid universe does not match the bound market snapshot");
@@ -607,6 +623,23 @@ function packetLiquidUniverse(
     },
     features,
   };
+}
+
+function calendarDateEpoch(value: string, field: string): number {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new TypeError(`${field} must be a real YYYY-MM-DD date`);
+  }
+  const parsed = Date.parse(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value) {
+    throw new TypeError(`${field} must be a real YYYY-MM-DD date`);
+  }
+  return parsed;
+}
+
+function timestampEpoch(value: string, field: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) throw new TypeError(`${field} must be a timestamp`);
+  return parsed;
 }
 
 function requireRoundFence(

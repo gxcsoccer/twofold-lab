@@ -186,7 +186,7 @@ same 5-10 position, 20% single-position, and 5% minimum-cash constraints.
 
 ## Verification
 
-- The Worker suite passes all 83 files and 337 tests; Worker typecheck and
+- The Worker suite passes all 83 files and 338 tests; Worker typecheck and
   production build pass.
 - Core, DSH Bundle, Worker, and Dashboard production TypeScript builds pass.
 - The clean Vercel production build passes package builds, Next.js compile,

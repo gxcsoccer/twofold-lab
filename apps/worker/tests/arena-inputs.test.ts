@@ -638,6 +638,22 @@ describe("Arena invocation inputs", () => {
     }
   });
 
+  it("rejects a malformed frozen-universe session date", async () => {
+    const fixture = createBundleFixture();
+    try {
+      await expect(buildArenaInputs({
+        ...fixture,
+        snapshot: sealedSnapshot,
+        decisionUniverse: decisionUniverse("not-a-date"),
+        now: new Date("2026-08-23T01:00:00.000Z"),
+      })).rejects.toThrow(
+        "liquid universe as-of session date must be a real YYYY-MM-DD date",
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("treats the root-only preset as a distinct immutable entrant Bundle", async () => {
     const fixture = createBundleFixture();
     try {
