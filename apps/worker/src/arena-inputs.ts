@@ -566,7 +566,7 @@ function packetLiquidUniverse(
   const memberSymbols = artifact.members.map((member) => member.symbol).sort();
   const snapshotSymbols = [...snapshot.symbols].sort();
   if (
-    artifact.asOfSessionDate !== snapshot.targetSessionDate
+    artifact.asOfSessionDate > snapshot.targetSessionDate
     || artifact.frozenAt > snapshot.cutoffAt
     || memberSymbols.length !== snapshotSymbols.length
     || memberSymbols.some((symbol, index) => symbol !== snapshotSymbols[index])

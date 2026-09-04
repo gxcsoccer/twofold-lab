@@ -19,6 +19,8 @@ import {
   type ArenaMarketSnapshot,
   type ArenaPortfolioState,
 } from "../src/arena-inputs.js";
+import type { LoadedLiquidUniverse } from
+  "../src/liquid-universe-reference.js";
 
 const BUNDLE_FIXTURE_FILES = [
   "packages/dsh-twofold/package.json",
@@ -114,6 +116,75 @@ const configuredPortfolio: ArenaPortfolioState = Object.freeze({
     }),
   ]),
 });
+
+function decisionUniverse(asOfSessionDate: string): LoadedLiquidUniverse {
+  const candidates = sealedSnapshot.symbols.map((symbol, index) => ({
+    symbol,
+    assetId: `asset-${symbol}`,
+    issuer: `${symbol} Corporation`,
+    issuerTaxResidency: "US",
+    primaryExchange: "NASDAQ",
+    effectiveFrom: "2000-01-01",
+    asOfSessionDate,
+    historyStartDate: "2026-01-01",
+    historySessionCount: "160",
+    latestClosePrice: index === 0 ? "195.3" : "643.3",
+    medianDollarVolume20d: "100000000",
+    return5dBps: "100",
+    return20dBps: "200",
+    return60dBps: "300",
+    liquidityRank: String(index + 1),
+    selected: true,
+    selectionReason: symbol === "LULU"
+      ? "MANDATORY_CURRENT_HOLDING" as const
+      : "LIQUIDITY_RANK" as const,
+  }));
+  return {
+    sha256: "e".repeat(64),
+    artifact: {
+      schema: "twofold.liquid_universe_freeze/v1",
+      name: "US Liquid 100",
+      asOfSessionDate,
+      frozenAt: "2026-08-20T20:00:00.000Z",
+      policy: {
+        name: "US Liquid 100",
+        size: "100",
+        minimumPriceUsd: "5",
+        minimumMedianDollarVolumeUsd: "20000000",
+        medianDollarVolumeSessions: "20",
+        minimumHistorySessions: "120",
+        allowedExchanges: ["AMEX", "NASDAQ", "NYSE"],
+        mandatorySymbols: ["LULU"],
+        constraints: {
+          minimumPositions: "5",
+          maximumPositions: "10",
+          maximumPositionWeightBps: "2000",
+          minimumCashWeightBps: "500",
+        },
+      },
+      sources: {
+        observedAt: "2026-08-20T20:00:00.000Z",
+        alpacaAssets: { url: "https://example.com/a", responseSha256: "1".repeat(64) },
+        nasdaqStockScreener: { url: "https://example.com/b", responseSha256: "2".repeat(64) },
+        nasdaqTradedDirectory: { url: "https://example.com/c", responseSha256: "3".repeat(64) },
+        alpacaDailyBars: { url: "https://example.com/d", responseSha256: "4".repeat(64) },
+      },
+      eligibleCandidateCount: "2",
+      members: candidates.map((candidate, index) => ({
+        instrumentId: `74000000-0000-4000-8000-${(index + 1).toString().padStart(12, "0")}`,
+        symbol: candidate.symbol,
+        instrumentType: "common_stock" as const,
+        primaryExchange: candidate.primaryExchange,
+        issuerTaxResidency: candidate.issuerTaxResidency,
+        effectiveFrom: candidate.effectiveFrom,
+        issuer: candidate.issuer,
+        liquidityRank: candidate.liquidityRank,
+        selectionReason: candidate.selectionReason,
+      })),
+      candidates,
+    },
+  };
+}
 
 function createBundleFixture(): {
   repositoryRoot: string;
@@ -525,6 +596,43 @@ describe("Arena invocation inputs", () => {
       expect(canonicalJson(packetJson)).toBe(built.packetArtifact.content);
       expect(jsonNumberPaths(packetJson)).toEqual([]);
       expect(jsonNumberPaths(bundleJson)).toEqual([]);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("reuses a frozen Season universe for a later Round snapshot", async () => {
+    const fixture = createBundleFixture();
+    try {
+      const built = await buildArenaInputs({
+        ...fixture,
+        snapshot: sealedSnapshot,
+        decisionUniverse: decisionUniverse("2026-08-20"),
+        now: new Date("2026-08-23T01:00:00.000Z"),
+      });
+      const packet = JSON.parse(built.packetArtifact.content) as {
+        payload: {
+          decision_universe: { as_of_session_date: string };
+          market_snapshot: { target_session_date: string };
+        };
+      };
+
+      expect(packet.payload.decision_universe.as_of_session_date).toBe("2026-08-20");
+      expect(packet.payload.market_snapshot.target_session_date).toBe("2026-08-21");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects a frozen universe dated after the bound snapshot", async () => {
+    const fixture = createBundleFixture();
+    try {
+      await expect(buildArenaInputs({
+        ...fixture,
+        snapshot: sealedSnapshot,
+        decisionUniverse: decisionUniverse("2026-08-22"),
+        now: new Date("2026-08-23T01:00:00.000Z"),
+      })).rejects.toThrow("liquid universe does not match the bound market snapshot");
     } finally {
       fixture.cleanup();
     }
