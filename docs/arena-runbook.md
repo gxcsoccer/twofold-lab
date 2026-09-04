@@ -1,6 +1,6 @@
 # Private Arena runbook
 
-Updated: 2026-08-29.
+Updated: 2026-09-04.
 
 ## Start gate
 
@@ -183,13 +183,16 @@ Before a deadline, a crashed Worker can restart and safely reclaim an expired
 lease. After a deadline, do not edit queue rows or backdate timestamps. Preserve
 the evidence and investigate the underlying Worker/provider outage.
 
-## Current Round 1 boundaries
+## Current production boundaries
 
-- Decision closes: `2026-08-31T13:15:00.000Z` (21:15 Asia/Shanghai).
-- S1 open/reference: `2026-08-31T13:30:00.000Z` / `13:32:00.000Z`.
-- S1 close evidence: after `2026-08-31T20:20:00.000Z`.
-- S2 open/reference: `2026-09-01T13:30:00.000Z` / `13:32:00.000Z`.
-- S2 final evidence/ranking: after `2026-09-01T20:20:00.000Z`.
+- Round 1 (`d83eff85-da7b-5e07-81d6-d4feaf4d9839`) is closed through audited
+  no-trade recovery and has two tied S2 valuations.
+- Round 2 (`c0f322d4-2be8-87eb-8002-6fc70c5f34cb`) is the current Round. Its
+  decision deadline is `2026-09-04T13:15:00.000Z`.
+- S1 open/reference is `2026-09-04T13:30:00.000Z` / `13:32:00.000Z`; S1 close
+  evidence is due after `20:20:00.000Z`.
+- S2 open/reference is `2026-09-08T13:30:00.000Z` / `13:32:00.000Z`; final
+  evidence and no-trade valuation are due after `20:20:00.000Z`.
 
 The authenticated Vercel Dashboard is the production read-only operational
 view; <http://127.0.0.1:3210> is the local equivalent. It must show both
@@ -300,6 +303,19 @@ run before the shared S2 close is sealed. The recovery Worker then:
 flight. A terminal `FAILED` recovery requires investigation of its stored,
 sanitized error and the shared evidence; never edit queue rows, backdate a
 completion, or mark the failed phase successful.
+
+A no-trade request is claimable only while its source work item is still
+`FAILED` or `CANCELED`, no accepted target exists, no S2 valuation exists, and
+the shared S2 binding is present. If `recover_failed_arena_work_item` safely
+reopens the source, its immutable no-trade row remains as audit evidence but is
+automatically fenced from execution.
+
+If a recovery exhausted its retries before a now-fixed dependency became
+available, use the service-only `rearm_failed_arena_no_trade_recovery` RPC with
+the exact failed attempt count, a specific reason, operator identity, and real
+rearm timestamp. The RPC records append-only rearm evidence and refuses a
+nonterminal source, missing close binding, existing S2 valuation, or identity
+mismatch. Never update the recovery row directly.
 
 ## Self-evolution operations
 
