@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(256);
+select plan(266);
 
 select has_table('public', 'arena_round', 'competition Rounds are durable');
 select has_column(
@@ -2672,6 +2672,15 @@ select has_function(
   array['uuid', 'uuid', 'timestamp with time zone', 'text', 'text', 'boolean'],
   'recovery failures use a lease-safe retry boundary'
 );
+select has_table(
+  'public', 'arena_no_trade_recovery_rearm',
+  'operator rearm evidence is durable and append-only'
+);
+select has_function(
+  'public', 'rearm_failed_arena_no_trade_recovery',
+  array['uuid', 'bigint', 'text', 'text', 'timestamp with time zone'],
+  'an exhausted recovery has one narrow audited rearm boundary'
+);
 
 create temporary table arena_round_2_fixture on commit drop as
 select round.round_id, entry.round_entry_id, entry.decision_id, entry.run_id
@@ -2731,6 +2740,16 @@ reset role;
 select is(
   (select value from arena_no_trade_early_claim), null::jsonb,
   'no-trade recovery cannot run before the real S2-close boundary'
+);
+set local role service_role;
+create temporary table arena_no_trade_missing_evidence_claim on commit drop as
+select public.claim_arena_no_trade_recovery(
+  'arena-no-trade-worker', 60, '2026-09-03T20:20:04.000Z'
+) as value;
+reset role;
+select is(
+  (select value from arena_no_trade_missing_evidence_claim), null::jsonb,
+  'a due recovery waits without burning an attempt until S2 evidence is bound'
 );
 
 insert into public.raw_artifact (
@@ -2799,14 +2818,15 @@ select public.register_arena_round_close_snapshot(
   'fa300000-0000-4000-8000-000000000001',
   'arena-round-contract'
 );
-create temporary table arena_no_trade_claim on commit drop as
+create temporary table arena_no_trade_first_claim on commit drop as
 select public.claim_arena_no_trade_recovery(
   'arena-no-trade-worker', 60, '2026-09-03T20:20:07.000Z'
 ) as value;
+grant select on arena_no_trade_first_claim to anon;
 reset role;
 
 select is(
-  (select value->>'schema' from arena_no_trade_claim),
+  (select value->>'schema' from arena_no_trade_first_claim),
   'twofold.arena_no_trade_recovery/v1',
   'the no-trade recovery lease schema is explicit'
 );
@@ -2814,10 +2834,10 @@ select ok((
   select value->>'status' = 'CLAIMED'
      and value->>'reasonCode' = 'DECISION_UNAVAILABLE'
      and value->>'attemptCount' = '1'
-    from arena_no_trade_claim
+    from arena_no_trade_first_claim
 ), 'the due recovery is leased exactly once with its causal reason');
 select ok(
-  not public.jsonb_contains_number((select value from arena_no_trade_claim)),
+  not public.jsonb_contains_number((select value from arena_no_trade_first_claim)),
   'the no-trade recovery lease contains no JSON numeric tokens'
 );
 set local role anon;
@@ -2829,6 +2849,107 @@ select throws_ok(
   'anonymous callers cannot claim private no-trade recovery'
 );
 reset role;
+
+set local role service_role;
+create temporary table arena_no_trade_first_failure on commit drop as
+select public.fail_arena_no_trade_recovery(
+  (select (value->>'recoveryId')::uuid from arena_no_trade_first_claim),
+  (select (value->>'leaseToken')::uuid from arena_no_trade_first_claim),
+  '2026-09-03T20:20:08.000Z', 'EVIDENCE_TRANSIENT',
+  'simulated retry before the operator rearm contract', true
+) as value;
+create temporary table arena_no_trade_second_claim on commit drop as
+select public.claim_arena_no_trade_recovery(
+  'arena-no-trade-worker', 60, '2026-09-03T20:21:08.000Z'
+) as value;
+create temporary table arena_no_trade_second_failure on commit drop as
+select public.fail_arena_no_trade_recovery(
+  (select (value->>'recoveryId')::uuid from arena_no_trade_second_claim),
+  (select (value->>'leaseToken')::uuid from arena_no_trade_second_claim),
+  '2026-09-03T20:21:09.000Z', 'EVIDENCE_TRANSIENT',
+  'simulated retry before the operator rearm contract', true
+) as value;
+create temporary table arena_no_trade_third_claim on commit drop as
+select public.claim_arena_no_trade_recovery(
+  'arena-no-trade-worker', 60, '2026-09-03T20:22:09.000Z'
+) as value;
+create temporary table arena_no_trade_terminal_failure on commit drop as
+select public.fail_arena_no_trade_recovery(
+  (select (value->>'recoveryId')::uuid from arena_no_trade_third_claim),
+  (select (value->>'leaseToken')::uuid from arena_no_trade_third_claim),
+  '2026-09-03T20:22:10.000Z', 'EVIDENCE_TRANSIENT',
+  'simulated retry before the operator rearm contract', true
+) as value;
+reset role;
+select ok((
+  select status = 'FAILED' and attempt_count = 3
+    from public.arena_no_trade_recovery
+   where round_entry_id = (select round_entry_id from arena_round_2_fixture)
+), 'ordinary retries remain bounded and terminal after the third failure');
+
+set local role anon;
+select throws_ok(
+  $$select public.rearm_failed_arena_no_trade_recovery(
+    (select (value->>'recoveryId')::uuid from arena_no_trade_first_claim),
+    3, 'operator-reviewed dependency race', 'anon',
+    '2026-09-03T20:22:11.000Z'
+  )$$,
+  '42501', null,
+  'anonymous callers cannot rearm failed no-trade recovery'
+);
+reset role;
+
+set local role service_role;
+create temporary table arena_no_trade_rearm on commit drop as
+select public.rearm_failed_arena_no_trade_recovery(
+  (select (value->>'recoveryId')::uuid from arena_no_trade_first_claim),
+  3, 'operator-reviewed dependency race', 'arena-operator',
+  '2026-09-03T20:22:11.000Z'
+) as value;
+reset role;
+select ok((
+  select value->>'status' = 'REQUESTED' and value->>'attemptCount' = '3'
+    from arena_no_trade_rearm
+), 'the audited rearm makes only the exhausted recovery requestable again');
+select ok((
+  select previous_attempt_count = 3
+     and reason = 'operator-reviewed dependency race'
+     and rearmed_by = 'arena-operator'
+     and rearmed_at = '2026-09-03T20:22:11.000Z'
+    from public.arena_no_trade_recovery_rearm
+   where recovery_id = (
+     select (value->>'recoveryId')::uuid from arena_no_trade_first_claim
+   )
+), 'the rearm preserves exact immutable operator evidence');
+set local role service_role;
+select is(
+  (public.rearm_failed_arena_no_trade_recovery(
+    (select (value->>'recoveryId')::uuid from arena_no_trade_first_claim),
+    3, 'operator-reviewed dependency race', 'arena-operator',
+    '2026-09-03T20:22:11.000Z'
+  )->>'status'),
+  'REQUESTED',
+  'an exact rearm retry is idempotent'
+);
+select throws_ok(
+  $$select public.rearm_failed_arena_no_trade_recovery(
+    (select (value->>'recoveryId')::uuid from arena_no_trade_first_claim),
+    3, 'changed reason', 'arena-operator',
+    '2026-09-03T20:22:11.000Z'
+  )$$,
+  '23505', 'no-trade recovery rearm identity was reused',
+  'a rearm retry cannot rewrite its audit explanation'
+);
+create temporary table arena_no_trade_claim on commit drop as
+select public.claim_arena_no_trade_recovery(
+  'arena-no-trade-worker', 60, '2026-09-03T20:22:11.000Z'
+) as value;
+reset role;
+select is(
+  (select value->>'attemptCount' from arena_no_trade_claim),
+  '4',
+  'the post-audit attempt remains visible in the monotonic attempt count'
+);
 
 create temporary table arena_no_trade_valuation_payload on commit drop as
 select jsonb_build_object(
@@ -2863,7 +2984,7 @@ select throws_ok(
     (select (value->>'leaseToken')::uuid from arena_no_trade_claim),
     jsonb_set(canonical_json::jsonb, '{ledgerSha256}',
       to_jsonb(repeat('0', 64)))::text,
-    '2026-09-03T20:20:08.000Z'
+    '2026-09-03T20:22:12.000Z'
   ) from arena_no_trade_valuation_payload$$,
   '22023',
   'Arena no-trade valuation diverges from unchanged ledger or S2 evidence',
@@ -2883,7 +3004,7 @@ select public.commit_arena_no_trade_recovery(
   (select (value->>'recoveryId')::uuid from arena_no_trade_claim),
   (select (value->>'leaseToken')::uuid from arena_no_trade_claim),
   (select canonical_json from arena_no_trade_valuation_payload),
-  '2026-09-03T20:20:08.000Z'
+  '2026-09-03T20:22:13.000Z'
 ) as value;
 reset role;
 
@@ -2894,7 +3015,7 @@ select is(
 );
 select ok((
   select status = 'SUCCEEDED' and valuation_id is not null
-     and completed_at = '2026-09-03T20:20:08.000Z'
+     and completed_at = '2026-09-03T20:22:13.000Z'
     from public.arena_no_trade_recovery
    where round_entry_id = (select round_entry_id from arena_round_2_fixture)
 ), 'the recovery and its S2 valuation commit together');

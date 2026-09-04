@@ -50,7 +50,9 @@ export class CorporateActionAccountReconciler {
       if (work.items.length === 0) return "idle";
       const result = await this.#reconcile(work, this.#recordedBy, signal);
       signal.throwIfAborted();
-      if (result.blocked.length > 0) return "failed";
+      // Policy and timing blocks are durable fail-closed work. Operational
+      // health reports their specific alert codes; they are not transport or
+      // Worker failures and must not poison every subsequent tick.
       return result.prepared !== "0" || result.applied !== "0"
         ? "completed"
         : "idle";
