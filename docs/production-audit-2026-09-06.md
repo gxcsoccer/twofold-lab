@@ -39,6 +39,18 @@ the repaired Round calendar/source returned HTTP 200 for all 100 frozen symbols
 on the September 4 session. The full historical Round SQL fixture remains
 blocked by its expired real-time S1 plan deadline; it is not counted as passing.
 
+Production deployment `dpl_5TattDMvuPRBVi3E7K4yyjqFUtcR` is Ready and serves
+`https://twofold-lab-neon.vercel.app`. The normal production cron completed both
+audited S1-close recoveries at attempt 4. Both tasks reference shared snapshot
+`c5cc72e5-65b8-4d03-8b56-58b10d487f61` and shared tax FX evidence. The snapshot
+contains all 100 symbols for September 4, observed September 6 at
+08:42:11.122 UTC and sealed at 08:42:17.637531 UTC; neither time was backdated.
+Both Strategy Ledger heads remain sequence 0 with their original hashes.
+Expired decisions and opens remain failed. R2 no-trade recovery still has zero
+attempts and waits for September 8 at 20:20 UTC (September 9 at 04:20 Singapore).
+Health continues to report the historical terminal-work and unsupported RCL
+policy alerts; successful collection is not the same as an all-green season.
+
 Expired S1 opens/agent decisions must not be revived. R2's failed contestant
 outcomes are not overwritten. RCL's foreign-dividend policy remains explicitly
 unsupported pending authoritative policy evidence; no tax treatment is guessed.
