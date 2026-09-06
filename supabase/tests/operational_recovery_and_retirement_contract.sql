@@ -1,6 +1,7 @@
 -- Structural and access contract for dependency-gated operational recovery.
--- Behavioral rearm/retirement paths are covered by the Round and Season
--- fixture contracts; this file stays safe against any pre-existing live data.
+-- Phase-aware claim behavior is covered by phase_aware_recovery_behavior_contract.sql.
+-- Rearm/retirement paths are covered by the Round and Season fixture contracts;
+-- this file checks structure and access without changing pre-existing live data.
 begin;
 
 create extension if not exists pgtap with schema extensions;
@@ -54,13 +55,13 @@ select ok(
   pg_get_functiondef(
     'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
   ) like '%accepted_target_submission%',
-  'an accepted decision fences stale decision-failure recovery'
+  'the claim definition contains an accepted-submission fence'
 );
 select ok(
   pg_get_functiondef(
     'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
   ) like '%source.phase = ''RUN_AGENT_DECISION''%',
-  'accepted targets do not block carry-forward after a later execution failure'
+  'the claim definition includes the decision-phase condition'
 );
 select ok(
   pg_get_functiondef(

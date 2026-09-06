@@ -400,7 +400,7 @@ export async function fetchAlpacaDailyBars(
       }));
     if (firstObservedAt === undefined) firstObservedAt = now().toISOString();
     const pageBody = await withAlpacaTransportErrors("market-data body", config, options.signal,
-      () => response.text());
+      () => response.text(), response);
     if (!response.ok) {
       throw new AlpacaRequestError("market-data", response, pageBody, config);
     }

@@ -25,6 +25,72 @@ const adapters = [
 afterEach(() => vi.restoreAllMocks());
 
 describe.each(adapters)("$name transport failures", ({ run }) => {
+  it.each(["fetch", "body"])("retains redacted nested root causes for %s failures", async (stage) => {
+    const root = Object.assign(new Error(`lookup failed ${secret} ${encodeURIComponent(secret)}`), { code: "ENOTFOUND" });
+    const fail = async (): Promise<never> => { throw new TypeError("fetch failed", { cause: root }); };
+    const error = await run(async () => {
+      if (stage === "fetch") return fail();
+      const response = new Response("");
+      vi.spyOn(response, "text").mockImplementation(fail);
+      return response;
+    }).catch((cause: unknown) => cause) as AlpacaRequestError;
+    expect(error).toMatchObject({ code: "ALPACA_TRANSIENT_FAILURE", retryable: true });
+    expect(error.message).toContain("ENOTFOUND");
+    expect(error.message).toContain("lookup failed");
+    expect(error.message).not.toContain(secret);
+    expect(error.message).not.toContain(encodeURIComponent(secret));
+    expect(error.cause).toBeUndefined();
+  });
+
+  it("bounds cyclic aggregate causes while retaining connection codes", async () => {
+    const root = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
+    const aggregate = new AggregateError([root], "connection attempts failed");
+    root.cause = aggregate;
+    const error = await run(async () => {
+      throw new TypeError("fetch failed", { cause: aggregate });
+    }).catch((cause: unknown) => cause) as AlpacaRequestError;
+    expect(error.message).toContain("ECONNREFUSED");
+    expect(error.message.length).toBeLessThanOrEqual(2_000);
+  });
+
+  it("bounds and redacts oversized nested diagnostics", async () => {
+    const error = await run(async () => {
+      throw new TypeError("fetch failed", { cause: new Error(`${secret} ${"x".repeat(5_000)}`) });
+    }).catch((cause: unknown) => cause) as AlpacaRequestError;
+    expect(error.message).toContain("[REDACTED]");
+    expect(error.message).not.toContain(secret);
+    expect(error.message.length).toBeLessThanOrEqual(2_000);
+  });
+
+  it.each([200, 400, 401, 403, 408, 429, 503])("preserves HTTP %s classification and request ID after a body failure", async (status) => {
+    const error = await run(async () => {
+      const response = new Response("", { status, headers: { "x-request-id": "body-request" } });
+      vi.spyOn(response, "text").mockRejectedValue(new Error("stream terminated", {
+        cause: Object.assign(new Error("socket closed"), { code: "ECONNRESET" }),
+      }));
+      return response;
+    }).catch((cause: unknown) => cause) as AlpacaRequestError;
+    const retryable = [200, 408, 429, 503].includes(status);
+    expect(error).toMatchObject({ retryable, code: status === 401 || status === 403
+      ? "ALPACA_PERMISSION_DENIED" : retryable ? "ALPACA_TRANSIENT_FAILURE" : "ALPACA_REQUEST_REJECTED" });
+    expect(error.message).toContain(`HTTP ${status}`);
+    expect(error.message).toContain("requestId=body-request");
+    expect(error.message).toContain("ECONNRESET");
+  });
+
+  it("gives parent cancellation precedence over a failed permission-response body", async () => {
+    const parent = new AbortController();
+    const reason = new Error("worker stopped");
+    await expect(run(async () => {
+      const response = new Response("", { status: 403 });
+      vi.spyOn(response, "text").mockImplementation(async () => {
+        parent.abort(reason);
+        throw new Error("stream terminated");
+      });
+      return response;
+    }, parent.signal)).rejects.toBe(reason);
+  });
+
   it.each(["fetch", "body"])("classifies and redacts a %s failure", async (stage) => {
     const fail = () => { throw new TypeError(`socket failed ${secret} ${encodeURIComponent(secret)}`); };
     const fetchImplementation = vi.fn(async () => {

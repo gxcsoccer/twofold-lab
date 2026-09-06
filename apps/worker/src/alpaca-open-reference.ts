@@ -156,7 +156,7 @@ export async function fetchAlpacaOpenReferences(
       signal: providerSignal,
     }));
   const rawBody = await withAlpacaTransportErrors("open-reference body", config, options.signal,
-    () => response.text());
+    () => response.text(), response);
   if (!response.ok) {
     throw new AlpacaRequestError("open-reference", response, rawBody, config);
   }

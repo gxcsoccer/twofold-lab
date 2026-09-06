@@ -36,7 +36,7 @@ profile composition verification. The rejection-redaction follow-up (`c437126`)
 added four regressions and passed the same full verification with 647 unit
 tests. These are version-specific counts, not a claim about the latest PR head.
 
-The transport-error follow-up added 20 regressions across both daily-bar and
+The transport-error follow-up (`e2f63b7`) added 20 regressions across both daily-bar and
 open-reference adapters. Fetch failures, response-body read failures, and provider
 timeouts now reach the queue as retryable `ALPACA_TRANSIENT_FAILURE` errors;
 parent cancellation remains `WORKER_ABORTED`, and JSON validation errors are not
@@ -46,6 +46,27 @@ classification (12 failed, 8 passed), then passed after the repair. Full
 checks. `pnpm test:db:market-recovery` also passed its 38 planned pgTAP checks again
 with fixture changes rolled back.
 
+The subsequent review follow-up preserves a known HTTP status and request ID
+when response-body reading fails: 401/403 remain terminal permission errors,
+other terminal HTTP rejections stay terminal, and successful-response stream
+failures plus 408/429/5xx stay retryable. Transport diagnostics now include
+bounded, cycle-safe cause/aggregate messages and error codes, redacted before
+truncation, without retaining raw cause objects. Its 24 added regressions first
+produced 22 failures and two passes, then passed after the repair. Full
+`pnpm verify` passed with 691 unit tests and all type/build/Harness/profile checks.
+
+`phase_aware_recovery_behavior_contract.sql` adds 10 behavioral checks using
+real accepted targets, terminal work transitions, the enqueue trigger, and the
+claim RPC. Both FAILED/CANCELED decision sources are fenced by accepted targets;
+all three later execution phases remain claimable. Missing S2 evidence consumes
+no attempts, while a decision failure without accepted targets can recover once
+S2 evidence exists. A session-local mutation control cloned the claim function
+into `pg_temp` and removed its phase condition: all six later-phase assertions
+failed, proving the fixture catches the old unconditional fence. No public
+function was replaced. The normal `pnpm test:db:market-recovery` command now
+includes this fixture and passed all 48 planned pgTAP checks; every fixture write
+was rolled back, without disabling deadline guards or changing economic records.
+
 Both database migrations passed transactional preflight and were applied using
 the migration ledger; `pnpm test:db:market-recovery` then passed all 38 planned
 pgTAP checks with fixture changes rolled back. A read-only provider probe using
@@ -53,8 +74,9 @@ the repaired Round calendar/source returned HTTP 200 for all 100 frozen symbols
 on the September 4 session. The full historical Round SQL fixture remains
 blocked by its expired real-time S1 plan deadline; it is not counted as passing.
 
-Production deployment `dpl_5TattDMvuPRBVi3E7K4yyjqFUtcR` is Ready and serves
-`https://twofold-lab-neon.vercel.app`. The normal production cron completed both
+The initial production deployment `dpl_5TattDMvuPRBVi3E7K4yyjqFUtcR` became Ready
+on `https://twofold-lab-neon.vercel.app` (later review fixes supersede that build).
+The normal production cron completed both
 audited S1-close recoveries at attempt 4. Both tasks reference shared snapshot
 `c5cc72e5-65b8-4d03-8b56-58b10d487f61` and shared tax FX evidence. The snapshot
 contains all 100 symbols for September 4, observed September 6 at
