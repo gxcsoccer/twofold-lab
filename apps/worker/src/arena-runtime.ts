@@ -68,7 +68,7 @@ import {
 } from "./model-usage-buffer.js";
 import { sanitizeFailureMessage } from "./failure-safety.js";
 import { portfolioConstraintViolation } from "./arena-inputs.js";
-import { buildArenaDecisionAdmissionEvidence } from
+import { tryBuildArenaDecisionAdmissionEvidence } from
   "./arena-decision-evidence.js";
 import { importArenaRuntimePackage } from
   "./arena-runtime-package-manifest.js";
@@ -1263,12 +1263,16 @@ class ActiveArenaRun {
         );
       }
       const acceptedAt = this.now().toISOString();
-      const admissionEvidence = buildArenaDecisionAdmissionEvidence({
+      const admission = tryBuildArenaDecisionAdmissionEvidence({
         identity: this.prepared.identity,
         packet: this.packet,
         submission,
         acceptedAt,
       });
+      if (!admission.ok) {
+        return this.persistSubmissionRejection(admission.code, admission.reason);
+      }
+      const admissionEvidence = admission.evidence;
       if (admissionEvidence.guardAction !== "ALLOW") {
         return this.persistSubmissionRejection(
           "ADMISSION_GUARD_BLOCKED",
@@ -1314,6 +1318,7 @@ class ActiveArenaRun {
         decisionId: this.prepared.identity.decisionId,
         rootHarnessSessionId: this.rootSessionId,
         rejectionCode: code,
+        rejectionReason: sanitizeFailureMessage(reason),
       },
       () => {
         this.projection.submission = {

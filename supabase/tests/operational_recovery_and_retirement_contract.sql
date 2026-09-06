@@ -6,7 +6,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(24);
+select plan(25);
 
 select has_table(
   'public', 'arena_no_trade_recovery_rearm',
@@ -54,7 +54,13 @@ select ok(
   pg_get_functiondef(
     'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
   ) like '%accepted_target_submission%',
-  'an accepted decision fences no-trade recovery'
+  'an accepted decision fences stale decision-failure recovery'
+);
+select ok(
+  pg_get_functiondef(
+    'public.claim_arena_no_trade_recovery(text,integer,timestamptz)'::regprocedure
+  ) like '%source.phase = ''RUN_AGENT_DECISION''%',
+  'accepted targets do not block carry-forward after a later execution failure'
 );
 select ok(
   pg_get_functiondef(

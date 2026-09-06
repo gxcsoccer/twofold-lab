@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AlpacaRequestError } from "../src/alpaca-request-error.js";
 
 import type { ArenaWorkItem } from "../src/arena-work-repository.js";
 import {
@@ -42,6 +43,21 @@ function queue(item: ArenaWorkItem | null): ArenaWorkQueue {
 }
 
 describe("Arena work runner", () => {
+  it.each([403, 429, 503])("persists provider classification and retryability for HTTP %s", async (status) => {
+    const repository = queue(work());
+    const runner = new ArenaWorkRunner({ workerId: "worker-1", leaseSeconds: 60,
+      queue: repository, now: () => new Date("2026-08-31T13:32:01.000Z"),
+      handlers: { CAPTURE_S1_OPEN_REFERENCE: async () => {
+        throw new AlpacaRequestError("open-reference", new Response(null, { status }),
+          '{"message":"subscription restriction"}', { apiKeyId: "key", apiSecretKey: "secret" });
+      } },
+    });
+    await expect(runner.tick(new AbortController().signal)).resolves.toBe("failed");
+    expect(repository.complete).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: status === 403 ? "ALPACA_PERMISSION_DENIED" : "ALPACA_TRANSIENT_FAILURE",
+      retryable: status !== 403,
+    }));
+  });
   it("claims only phases with configured handlers and completes exact output", async () => {
     const repository = queue(work());
     const runner = new ArenaWorkRunner({

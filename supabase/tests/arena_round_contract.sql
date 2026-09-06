@@ -4,7 +4,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(266);
+select plan(269);
 
 select has_table('public', 'arena_round', 'competition Rounds are durable');
 select has_column(
@@ -851,16 +851,28 @@ select is(
 );
 
 set local role service_role;
+select is(public.claim_arena_work_item(
+  'arena-round-contract-worker', 60, '2026-08-31T13:32:00.000Z',
+  'd5000000-0000-4000-8000-000000000001', array['CAPTURE_S1_OPEN_REFERENCE']
+), null::jsonb, 'SIP entitlement wait does not claim at open plus two minutes');
+select is(public.claim_arena_work_item(
+  'arena-round-contract-worker', 60, '2026-08-31T13:46:59.999Z',
+  'd5000000-0000-4000-8000-000000000001', array['CAPTURE_S1_OPEN_REFERENCE']
+), null::jsonb, 'SIP entitlement wait includes the full query end plus sixteen minutes');
+select is((select attempt_count from public.arena_work_item
+  where round_id = 'd5000000-0000-4000-8000-000000000001'
+    and phase = 'CAPTURE_S1_OPEN_REFERENCE'), 0,
+  'waiting for delayed SIP consumes no attempt');
 create temporary table second_arena_work_claim on commit drop as
 select public.claim_arena_work_item(
   'arena-round-contract-worker', 60,
-  '2026-08-31T13:32:00.000Z',
+  '2026-08-31T13:47:00.000Z',
   'd5000000-0000-4000-8000-000000000001'
 ) as value;
 reset role;
 select is((select value->>'phase' from second_arena_work_claim),
   'CAPTURE_S1_OPEN_REFERENCE',
-  'S1 reference becomes claimable at the frozen availability time');
+  'S1 reference becomes claimable once both frozen availability and SIP lag are satisfied');
 select throws_ok(
   $$update public.arena_work_item set status = 'SUCCEEDED'
      where round_id = 'd5000000-0000-4000-8000-000000000001'$$,

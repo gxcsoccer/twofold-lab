@@ -33,7 +33,11 @@ const nextConfig: NextConfig = {
       "../../packages/dsh-twofold/cordis.patch.yml",
       "../../packages/dsh-twofold/dist/**/*",
       "../../packages/dsh-twofold/src/**/*",
-      "../../profiles/twofold/**/*",
+      // Local Harness installs contain directory symlinks. Trace configuration
+      // only; runtime packages already have explicit serverless entry points.
+      "../../profiles/twofold/package.json",
+      "../../profiles/twofold/*.yml",
+      "../../profiles/twofold/agent-presets/**/*.yml",
     ],
   },
   outputFileTracingExcludes: {

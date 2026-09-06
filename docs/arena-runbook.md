@@ -305,8 +305,10 @@ sanitized error and the shared evidence; never edit queue rows, backdate a
 completion, or mark the failed phase successful.
 
 A no-trade request is claimable only while its source work item is still
-`FAILED` or `CANCELED`, no accepted target exists, no S2 valuation exists, and
-the shared S2 binding is present. If `recover_failed_arena_work_item` safely
+`FAILED` or `CANCELED`, no S2 valuation exists, and the shared S2 binding is
+present. An accepted target fences an old `RUN_AGENT_DECISION` failure, but
+does not fence a later S1-plan, checkpoint, or finalization failure: accepted
+intent is not successful execution. If `recover_failed_arena_work_item` safely
 reopens the source, its immutable no-trade row remains as audit evidence but is
 automatically fenced from execution.
 
@@ -316,6 +318,34 @@ the exact failed attempt count, a specific reason, operator identity, and real
 rearm timestamp. The RPC records append-only rearm evidence and refuses a
 nonterminal source, missing close binding, existing S2 valuation, or identity
 mismatch. Never update the recovery row directly.
+
+## Delayed SIP capture and recovery
+
+The production route remains SIP/raw. Do not silently replace SIP with IEX or
+change the first-minute VWAP/volume method. The queue waits until the frozen
+exchange open plus 17 minutes (one-minute query end plus 16-minute entitlement
+margin) before claiming either open-reference phase. This does not mutate the
+Round's frozen availability time or spend a retry while waiting.
+
+Close capture runs at the frozen close availability time, but its provider
+query ends at the actual exchange close, not at the later capture time. The
+Round's calendar also supplies the same-day completion fence, including early
+closes; ad-hoc ingestion retains its conservative 16:20 New York fence.
+Observation/seal timestamps always record the actual collection time.
+
+Alpaca 401/403 failures are terminal configuration/permission errors; do not
+blindly retry them. HTTP 408/429/5xx retain the bounded retry budget with 1- then
+2-minute backoff, subject to the frozen deadline. Provider request IDs and
+sanitized JSON error messages are persisted; credentials/raw HTML are not.
+
+After deploying the fix, only rearm still-in-window failed close tasks through
+`recover_failed_arena_work_item` with their exact attempt count and an audit
+reason. An S1 close must also seal before the S2 session date. Expired opens and
+decisions stay failed; never backdate a recovery or alter old packet bytes.
+
+Run `pnpm test:db:market-recovery` for rollback-only queue/recovery contracts.
+The focused queue fixture avoids the historical full Round fixture's real-time
+S1-plan admission deadline, so it remains runnable after the fixture trade date.
 
 ## Self-evolution operations
 

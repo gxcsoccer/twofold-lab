@@ -1,5 +1,6 @@
 import type { CorporateActionReconciliationResult } from
   "./corporate-action-account-runner.js";
+import { sanitizeFailureMessage } from "./failure-safety.js";
 import type { CorporateActionAccountWork } from
   "./corporate-action-work-repository.js";
 
@@ -23,6 +24,7 @@ export class CorporateActionAccountReconciler {
   readonly #source: CorporateActionAccountWorkSource;
   readonly #reconcile: CorporateActionAccountReconcileHandler;
   readonly #now: () => Date;
+  readonly #failureEnvironment: Readonly<Record<string, string | undefined>>;
   #running = false;
 
   constructor(input: {
@@ -30,6 +32,7 @@ export class CorporateActionAccountReconciler {
     readonly source: CorporateActionAccountWorkSource;
     readonly reconcile: CorporateActionAccountReconcileHandler;
     readonly now?: () => Date;
+    readonly failureEnvironment?: Readonly<Record<string, string | undefined>>;
   }) {
     if (input.recordedBy.trim() === "" || input.recordedBy !== input.recordedBy.trim()) {
       throw new TypeError("recordedBy must be a trimmed non-empty identity");
@@ -38,6 +41,7 @@ export class CorporateActionAccountReconciler {
     this.#source = input.source;
     this.#reconcile = input.reconcile;
     this.#now = input.now ?? (() => new Date());
+    this.#failureEnvironment = input.failureEnvironment ?? process.env;
   }
 
   async tick(signal: AbortSignal): Promise<"idle" | "completed" | "failed"> {
@@ -58,6 +62,12 @@ export class CorporateActionAccountReconciler {
         : "idle";
     } catch (error) {
       if (signal.aborted) throw error;
+      console.error({
+        event: "corporate_action_account_failed", workerId: this.#recordedBy,
+        errorMessage: sanitizeFailureMessage(
+          error instanceof Error ? error.message : String(error), this.#failureEnvironment,
+        ),
+      });
       return "failed";
     } finally {
       this.#running = false;

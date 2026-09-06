@@ -389,7 +389,7 @@ export class SupabaseArenaRepository {
       return Object.freeze({
         factId: fact.fact_id,
         symbol: fact.symbol,
-        barStart: fact.bar_start,
+        barStart: new Date(fact.bar_start).toISOString(),
         barDate: fact.bar_date,
         currency: fact.currency,
         openPrice: fact.open_price,
@@ -410,10 +410,10 @@ export class SupabaseArenaRepository {
       snapshotId: snapshot.snapshot_id,
       sourceVersionId: snapshot.source_version_id,
       manifestSha256: snapshot.manifest_sha256,
-      cutoffAt: snapshot.cutoff_at,
+      cutoffAt: new Date(snapshot.cutoff_at).toISOString(),
       targetSessionDate: snapshot.target_session_date,
       selectionPolicy: snapshot.selection_policy,
-      sealedAt: snapshot.sealed_at,
+      sealedAt: new Date(snapshot.sealed_at).toISOString(),
       symbols: Object.freeze([...snapshot.symbols]),
       bars: Object.freeze(bars),
     });

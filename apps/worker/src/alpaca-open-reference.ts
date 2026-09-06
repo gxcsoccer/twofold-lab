@@ -1,4 +1,5 @@
 import { parse } from "lossless-json";
+import { AlpacaRequestError } from "./alpaca-request-error.js";
 
 import { canonicalJson, sha256 } from "./arena-inputs.js";
 import { canonicalJsonNumber, PRIVATE_ARTIFACT_BUCKET } from "./market-data.js";
@@ -155,7 +156,7 @@ export async function fetchAlpacaOpenReferences(
   });
   const rawBody = await response.text();
   if (!response.ok) {
-    throw new Error(`Alpaca open-reference request failed with HTTP ${response.status}`);
+    throw new AlpacaRequestError("open-reference", response, rawBody, config);
   }
   if (response.headers.get("content-type")?.split(";", 1)[0]?.trim()
     !== "application/json") {

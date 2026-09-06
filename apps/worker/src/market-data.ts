@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AlpacaRequestError } from "./alpaca-request-error.js";
 
 import { isLosslessNumber, parse } from "lossless-json";
 
@@ -81,6 +82,8 @@ export interface AlpacaMarketDelivery {
 
 export interface FetchAlpacaOptions {
   readonly endAt?: string;
+  /** Only supplied from a frozen Round's authoritative exchange calendar. */
+  readonly sessionCloseAvailableAt?: string;
   readonly targetSessionDate?: string;
   readonly fetchImplementation?: typeof fetch;
   readonly now?: () => Date;
@@ -397,7 +400,7 @@ export async function fetchAlpacaDailyBars(
     if (firstObservedAt === undefined) firstObservedAt = now().toISOString();
     const pageBody = await response.text();
     if (!response.ok) {
-      throw new Error(`Alpaca market-data request failed with HTTP ${response.status}`);
+      throw new AlpacaRequestError("market-data", response, pageBody, config);
     }
     responseContentType(response);
 
@@ -476,7 +479,17 @@ export async function fetchAlpacaDailyBars(
   if (targetSessionDate === undefined || !commonDates.has(targetSessionDate)) {
     throw new Error("Alpaca response has no complete common session date for all symbols");
   }
-  assertCompletedSessionDate(targetSessionDate, retrievedAt);
+  if (options.sessionCloseAvailableAt === undefined) {
+    assertCompletedSessionDate(targetSessionDate, retrievedAt);
+  } else {
+    const availableAt = requireIsoTimestamp(options.sessionCloseAvailableAt, "sessionCloseAvailableAt");
+    if (options.targetSessionDate === undefined || options.endAt === undefined
+      || newYorkClock(new Date(endAt)).date !== targetSessionDate
+      || Date.parse(availableAt) < Date.parse(endAt) + 20 * 60_000
+      || Date.parse(firstObservedAt) < Date.parse(availableAt)) {
+      throw new Error("refusing to seal before the frozen session close availability");
+    }
+  }
 
   const normalizedManifestSha256 = sha256(
     facts.map((fact) => fact.factSha256).join("|"),

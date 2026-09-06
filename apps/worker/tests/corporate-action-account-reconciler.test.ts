@@ -64,13 +64,20 @@ describe("corporate-action account reconciler", () => {
   });
 
   it("turns transient reconciliation errors into a failed tick", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const runner = new CorporateActionAccountReconciler({
       recordedBy: "worker:test",
-      source: { load: vi.fn(async () => { throw new Error("database unavailable"); }) },
+      source: { load: vi.fn(async () => { throw new Error("database unavailable: do-not-leak"); }) },
       reconcile: vi.fn(),
       now: () => new Date("2026-09-01T13:00:00.000Z"),
+      failureEnvironment: { SUPABASE_SECRET_KEY: "do-not-leak" },
     });
 
     await expect(runner.tick(new AbortController().signal)).resolves.toBe("failed");
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({
+      event: "corporate_action_account_failed", workerId: "worker:test",
+      errorMessage: "database unavailable: [REDACTED]",
+    }));
+    log.mockRestore();
   });
 });
