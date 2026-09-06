@@ -30,8 +30,22 @@ Scope: S4 Round 2, read-only audit followed by user-authorized TDD repairs.
 ## Verification
 
 New regression tests were first run against failing behavior, then repaired.
-`pnpm verify` passed: 643 unit tests, all workspace type checks, production
-builds, Harness contract verification, and profile composition verification.
+The initial repair (`6e085c4`) passed `pnpm verify` with 643 unit tests, all
+workspace type checks, production builds, Harness contract verification, and
+profile composition verification. The rejection-redaction follow-up (`c437126`)
+added four regressions and passed the same full verification with 647 unit
+tests. These are version-specific counts, not a claim about the latest PR head.
+
+The transport-error follow-up added 20 regressions across both daily-bar and
+open-reference adapters. Fetch failures, response-body read failures, and provider
+timeouts now reach the queue as retryable `ALPACA_TRANSIENT_FAILURE` errors;
+parent cancellation remains `WORKER_ABORTED`, and JSON validation errors are not
+reclassified as transport failures. The new tests first reproduced the missing
+classification (12 failed, 8 passed), then passed after the repair. Full
+`pnpm verify` passed with 667 unit tests plus all type, build, Harness, and profile
+checks. `pnpm test:db:market-recovery` also passed its 38 planned pgTAP checks again
+with fixture changes rolled back.
+
 Both database migrations passed transactional preflight and were applied using
 the migration ledger; `pnpm test:db:market-recovery` then passed all 38 planned
 pgTAP checks with fixture changes rolled back. A read-only provider probe using

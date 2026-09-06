@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { AlpacaRequestError } from "./alpaca-request-error.js";
+import { AlpacaRequestError, withAlpacaTransportErrors } from "./alpaca-request-error.js";
 
 import { isLosslessNumber, parse } from "lossless-json";
 
@@ -387,18 +387,20 @@ export async function fetchAlpacaDailyBars(
       pageUrl.searchParams.set("page_token", nextPageToken);
     }
 
-    const response = await fetchImplementation(pageUrl, {
-      method: "GET",
-      headers: {
-        "APCA-API-KEY-ID": config.apiKeyId,
-        "APCA-API-SECRET-KEY": config.apiSecretKey,
-        Accept: "application/json",
-      },
-      redirect: "error",
-      signal: providerSignal,
-    });
+    const response = await withAlpacaTransportErrors("market-data", config, options.signal,
+      () => fetchImplementation(pageUrl, {
+        method: "GET",
+        headers: {
+          "APCA-API-KEY-ID": config.apiKeyId,
+          "APCA-API-SECRET-KEY": config.apiSecretKey,
+          Accept: "application/json",
+        },
+        redirect: "error",
+        signal: providerSignal,
+      }));
     if (firstObservedAt === undefined) firstObservedAt = now().toISOString();
-    const pageBody = await response.text();
+    const pageBody = await withAlpacaTransportErrors("market-data body", config, options.signal,
+      () => response.text());
     if (!response.ok) {
       throw new AlpacaRequestError("market-data", response, pageBody, config);
     }
