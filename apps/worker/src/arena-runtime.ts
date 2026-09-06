@@ -67,6 +67,7 @@ import {
   type HarnessUsageAttemptKey,
 } from "./model-usage-buffer.js";
 import { sanitizeFailureMessage } from "./failure-safety.js";
+import { persistSafeSubmissionRejection } from "./submission-rejection.js";
 import { portfolioConstraintViolation } from "./arena-inputs.js";
 import { tryBuildArenaDecisionAdmissionEvidence } from
   "./arena-decision-evidence.js";
@@ -1312,13 +1313,13 @@ class ActiveArenaRun {
     code: string,
     reason: string,
   ): Promise<PortfolioTargetsResult> {
-    await this.appendThenProject(
+    return persistSafeSubmissionRejection(reason, (safeReason) => this.appendThenProject(
       "decision.submission_rejected",
       {
         decisionId: this.prepared.identity.decisionId,
         rootHarnessSessionId: this.rootSessionId,
         rejectionCode: code,
-        rejectionReason: sanitizeFailureMessage(reason),
+        rejectionReason: safeReason,
       },
       () => {
         this.projection.submission = {
@@ -1328,8 +1329,7 @@ class ActiveArenaRun {
           rejectionCode: code,
         };
       },
-    );
-    return { status: "rejected" as const, reason };
+    ));
   }
 
   async finishFromHarness(): Promise<void> {
