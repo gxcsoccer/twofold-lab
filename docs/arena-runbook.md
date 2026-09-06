@@ -288,7 +288,8 @@ retain the existing cash-limited, exact-retry, and no-trade recovery contracts.
 ## No-trade recovery
 
 A terminal contestant-local decision, S1-plan, S1-checkpoint, or finalization
-failure automatically creates one `arena_no_trade_recovery` request. It cannot
+failure automatically creates one `arena_no_trade_recovery` request per source
+work item, with an independent retry history. It cannot
 run before the shared S2 close is sealed. The recovery Worker then:
 
 1. reads the unchanged Strategy Account and exact S2 snapshot;
@@ -311,6 +312,13 @@ does not fence a later S1-plan, checkpoint, or finalization failure: accepted
 intent is not successful execution. If `recover_failed_arena_work_item` safely
 reopens the source, its immutable no-trade row remains as audit evidence but is
 automatically fenced from execution.
+
+If the repaired source succeeds and a later phase fails, that phase appends its
+own recovery request; the earlier source and its audit/rearm history are not
+retargeted or deleted. Repeated notifications for the same source are idempotent.
+Only one recovery lease per entry may be active at a time. Existing S2 valuations
+still fence all pending recovery histories. The overview shows one entrant and
+prioritizes successful/active recovery over fenced historical sources.
 
 If a recovery exhausted its retries before a now-fixed dependency became
 available, use the service-only `rearm_failed_arena_no_trade_recovery` RPC with

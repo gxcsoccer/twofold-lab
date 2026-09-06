@@ -2,7 +2,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
-select plan(10);
+select plan(24);
 
 select public.register_arena_season(
   'recovery-behavior-contract:season',
@@ -326,6 +326,133 @@ select is(pg_temp.probe_recovery('RUN_AGENT_DECISION', 'FAILED')->'claim'->>'sta
   'CLAIMED', 'without accepted targets a terminal decision can recover after S2 evidence');
 
 -- Use future frozen dates so the database deadline guard remains enabled.
+
+-- Unlike the isolated probes above, preserve every transition inside this
+-- sequence. Only roll back once the entire scenario has been observed.
+create function pg_temp.probe_sequential_recovery()
+returns jsonb language plpgsql as $sequence$
+declare
+  v_decision public.arena_work_item%rowtype;
+  v_legacy jsonb;
+  v_first jsonb;
+  v_second jsonb;
+  v_result jsonb := '{}'::jsonb;
+begin
+  begin
+    select * into strict v_decision from public.arena_work_item
+     where round_id = 'd5000000-0000-4000-8000-000000000001' and phase = 'RUN_AGENT_DECISION';
+    -- Seed the exact legacy identity to cover upgrade compatibility as well.
+    insert into public.arena_no_trade_recovery (
+      recovery_id, round_entry_id, round_id, season_id, entrant_id, run_id,
+      source_work_item_id, reason_code, scheduled_at, next_attempt_at, recorded_by
+    ) values (
+      public.deterministic_uuid_from_sha256('twofold.arena_no_trade_recovery/v1', v_decision.round_entry_id::text),
+      v_decision.round_entry_id, v_decision.round_id, v_decision.season_id,
+      v_decision.entrant_id, v_decision.run_id, v_decision.work_item_id,
+      'DECISION_UNAVAILABLE', '2099-09-01T20:20:00Z', '2099-09-01T20:20:00Z', 'legacy-fixture'
+    );
+    perform set_config('twofold.arena_work_item_mutation', 'on', true);
+    update public.arena_work_item set status = 'FAILED', attempt_count = 1,
+      completed_at = '2099-08-28T22:25:00Z', result = '{"outcome":"FAILED"}',
+      error_code = 'FIXTURE_FAILURE', error_message = 'first failure', retryable = false
+     where work_item_id = v_decision.work_item_id;
+    perform set_config('twofold.arena_work_item_mutation', 'off', true);
+    select to_jsonb(r) into strict v_legacy from public.arena_no_trade_recovery r
+     where source_work_item_id = v_decision.work_item_id;
+    v_result := v_result || jsonb_build_object('reopened',
+      public.recover_failed_arena_work_item(v_decision.work_item_id, 1, 'fixture repair', 'fixture-operator')->>'status',
+      'reopenedClaim', public.claim_arena_no_trade_recovery('sequence-worker',60,'2099-09-01T20:21:00Z'));
+
+    perform set_config('twofold.arena_work_item_mutation', 'on', true);
+    update public.arena_work_item set status = 'SUCCEEDED',
+      completed_at = '2099-08-28T22:29:00Z', result = '{"outcome":"SUCCEEDED"}'
+     where work_item_id = v_decision.work_item_id;
+    perform set_config('twofold.arena_work_item_mutation', 'off', true);
+    perform public.accept_portfolio_targets(
+      'sequence:accepted', 'd7300000-0000-4000-8000-000000000002',
+      'recovery-behavior-contract-root', 'd7000000-0000-4000-8000-000000000001', repeat('a',64),
+      '[{"symbol":"LULU","target_weight_bps":"10000"}]', '0', 'Sequential fixture target',
+      '2099-08-28T22:30:00Z', 1, 'sequence-fixture'
+    );
+
+    perform set_config('twofold.arena_work_item_mutation', 'on', true);
+    update public.arena_work_item set status = 'FAILED', completed_at = '2099-08-31T13:20:00Z',
+      result = '{"outcome":"FAILED"}', error_code = 'FIXTURE_FAILURE', error_message = 'later failure', retryable = false
+     where round_entry_id = v_decision.round_entry_id and phase = 'PREPARE_S1_ORDERS';
+    perform set_config('twofold.arena_work_item_mutation', 'off', true);
+    v_first := public.claim_arena_no_trade_recovery('sequence-worker',60,'2099-09-01T20:21:00Z');
+    v_result := v_result || jsonb_build_object('first', v_first,
+      'firstCount', (select count(*) from public.arena_no_trade_recovery where round_entry_id = v_decision.round_entry_id),
+      'firstSource', (select work_item_id::text from public.arena_work_item
+        where round_entry_id = v_decision.round_entry_id and phase = 'PREPARE_S1_ORDERS'));
+
+    -- A different failure arriving during a live recovery lease must append
+    -- history, not replace that lease or allow another concurrent claim.
+    perform set_config('twofold.arena_work_item_mutation', 'on', true);
+    update public.arena_work_item set status = 'CANCELED', completed_at = '2099-09-01T20:20:00Z',
+      result = '{"outcome":"FAILED"}', error_code = 'FIXTURE_FAILURE', error_message = 'next failure', retryable = false
+     where round_entry_id = v_decision.round_entry_id and phase = 'SETTLE_S1_AND_PREPARE_S2';
+    perform set_config('twofold.arena_work_item_mutation', 'off', true);
+    v_result := v_result || jsonb_build_object(
+      'secondCount', (select count(*) from public.arena_no_trade_recovery where round_entry_id = v_decision.round_entry_id),
+      'concurrentClaim', public.claim_arena_no_trade_recovery('other-worker',60,'2099-09-01T20:21:01Z'),
+      'overview', public.get_private_arena_overview(v_decision.season_id, '2099-09-01T20:21:01Z'));
+    if v_first is not null then
+      perform public.fail_arena_no_trade_recovery((v_first->>'recoveryId')::uuid,
+        (v_first->>'leaseToken')::uuid, '2099-09-01T20:21:02Z', 'FIXTURE_FAILURE', 'release lease', false);
+    end if;
+    v_second := public.claim_arena_no_trade_recovery('other-worker',60,'2099-09-01T20:21:03Z');
+    v_result := v_result || jsonb_build_object('second', v_second,
+      'secondSource', (select work_item_id::text from public.arena_work_item
+        where round_entry_id = v_decision.round_entry_id and phase = 'SETTLE_S1_AND_PREPARE_S2'),
+      'legacyUnchanged', v_legacy = (select to_jsonb(r) from public.arena_no_trade_recovery r
+        where source_work_item_id = v_decision.work_item_id));
+    -- Repeated updates of the same terminal source are idempotent.
+    perform set_config('twofold.arena_work_item_mutation', 'on', true);
+    update public.arena_work_item set error_message = 'repeat terminal notification'
+     where round_entry_id = v_decision.round_entry_id and phase = 'SETTLE_S1_AND_PREPARE_S2';
+    perform set_config('twofold.arena_work_item_mutation', 'off', true);
+    v_result := v_result || jsonb_build_object('repeatCount',
+      (select count(*) from public.arena_no_trade_recovery where round_entry_id = v_decision.round_entry_id));
+    perform set_config('twofold.arena_work_item_mutation', 'on', true);
+    update public.arena_work_item set status = 'CANCELED', completed_at = '2099-09-01T20:21:04Z',
+      result = '{"outcome":"NO_TRADE_CARRY_FORWARD"}', error_code = 'NO_TRADE_CARRY_FORWARD'
+     where round_entry_id = v_decision.round_entry_id and phase = 'FINALIZE_ACCEPTED_TARGET_CYCLE';
+    v_result := v_result || jsonb_build_object('syntheticCount',
+      (select count(*) from public.arena_no_trade_recovery where round_entry_id = v_decision.round_entry_id));
+    update public.arena_work_item set status = 'REQUESTED', completed_at = null, result = null
+     where round_entry_id = v_decision.round_entry_id and phase = 'FINALIZE_ACCEPTED_TARGET_CYCLE';
+    update public.arena_work_item set status = 'FAILED', completed_at = '2099-09-01T20:21:05Z',
+      result = '{"outcome":"FAILED"}', error_code = 'CORPORATE_ACTION_GATE_BLOCKED'
+     where round_entry_id = v_decision.round_entry_id and phase = 'FINALIZE_ACCEPTED_TARGET_CYCLE';
+    perform set_config('twofold.arena_work_item_mutation', 'off', true);
+    v_result := v_result || jsonb_build_object('policyCount',
+      (select count(*) from public.arena_no_trade_recovery where round_entry_id = v_decision.round_entry_id));
+    raise exception using errcode = 'ZX002', message = 'rollback complete sequence';
+  exception when sqlstate 'ZX002' then null;
+  end;
+  return v_result;
+end;
+$sequence$;
+create temporary table sequential_result on commit drop as select pg_temp.probe_sequential_recovery() as value;
+select is((select value->>'reopened' from sequential_result), 'REQUESTED', 'real recovery RPC reopens the decision');
+select is((select value->'reopenedClaim' from sequential_result), 'null'::jsonb, 'old recovery stays fenced while decision is reopened');
+select is((select value->>'firstCount' from sequential_result), '2', 'later failure appends a distinct recovery beside legacy history');
+select is((select value#>>'{first,sourceWorkItemId}' from sequential_result),
+  (select value->>'firstSource' from sequential_result), 'sequential decision success then execution failure claims the execution source');
+select is((select value#>>'{first,attemptCount}' from sequential_result), '1', 'a new source starts its own retry budget');
+select is((select value->>'secondCount' from sequential_result), '3', 'another phase failure appends without replacing the live lease');
+select is((select value->'concurrentClaim' from sequential_result), 'null'::jsonb, 'only one recovery lease can be active per entry');
+select is((select jsonb_array_length(value#>'{overview,entrants}') from sequential_result), 1, 'multiple recovery histories do not duplicate overview entrants');
+select is((select value#>>'{overview,entrants,0,noTrade,sourcePhase}' from sequential_result),
+  'PREPARE_S1_ORDERS', 'overview prioritizes the active recovery');
+select is((select value#>>'{second,sourceWorkItemId}' from sequential_result),
+  (select value->>'secondSource' from sequential_result), 'next source becomes claimable after prior lease completes');
+select is((select value->>'legacyUnchanged' from sequential_result), 'true', 'legacy recovery identity and evidence remain byte-for-byte unchanged');
+select is((select value->>'repeatCount' from sequential_result), '3', 'repeated terminal notification does not duplicate recovery history');
+select is((select value->>'syntheticCount' from sequential_result), '3', 'carry-forward cancellation does not enqueue a synthetic failure');
+select is((select value->>'policyCount' from sequential_result), '3', 'corporate-action gate remains excluded from no-trade recovery');
+
 -- Admission itself is covered elsewhere; this owner-only fixture seeds the target.
 select public.accept_portfolio_targets(
   'recovery-behavior-contract:accepted-target',

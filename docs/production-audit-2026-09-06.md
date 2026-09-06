@@ -29,6 +29,40 @@ Scope: S4 Round 2, read-only audit followed by user-authorized TDD repairs.
 
 ## Verification
 
+### Source-scoped recovery follow-up
+
+Migration `202609060003` retains legacy recovery IDs and immutable source/rearm
+history, but keys new recovery identities by entry and source work item. A later
+terminal phase appends its own request instead of being suppressed by the old
+entry-level uniqueness. A partial unique index and serialized, nonblocking claim
+transaction permit only one live recovery lease per entry. The overview selects
+one recovery per entrant, so additional history cannot duplicate rows. Synthetic
+carry-forward cancellations and unsupported corporate-action failures do not
+enqueue additional recovery requests.
+
+The sequential regression uses the real operator recovery RPC, accepts targets
+after the reopened decision succeeds, then fails later execution phases without
+rolling back between those transitions. The first run against the old schema
+failed seven assertions; the repaired migration passed transactional preflight.
+The fixture now has 24 assertions, including preservation of legacy bytes,
+independent retry budgets, live-lease exclusion, overview cardinality, and
+synthetic/policy-failure exclusions. Full `pnpm verify` passed with 691 unit tests
+and all type/build/Harness/profile checks.
+
+After applying `202609060003` through the migration ledger,
+`pnpm test:db:market-recovery` passed **62 planned pgTAP checks (13 + 25 + 24)**,
+with all fixture writes rolled back. This is the current database-test total;
+the 38/48 totals below belong only to earlier commits.
+
+The production backfill appended two S4 S1-plan failure sources, both REQUESTED
+with zero attempts and the original September 8 20:20 UTC S2 boundary. Nine
+missing sources from retired Seasons were excluded. All 12 pre-existing recovery
+rows retained the same aggregate digest (`e9bb1f838eff244d593b48ebed37cef5`), all
+ledger heads retained digest `00b7a74a10069a34302d9915d386ac32`, and the valuation
+count remained 12. No expired work was reopened or marked successful.
+
+### Earlier verification — historical results, not current totals
+
 New regression tests were first run against failing behavior, then repaired.
 The initial repair (`6e085c4`) passed `pnpm verify` with 643 unit tests, all
 workspace type checks, production builds, Harness contract verification, and
@@ -46,7 +80,7 @@ classification (12 failed, 8 passed), then passed after the repair. Full
 checks. `pnpm test:db:market-recovery` also passed its 38 planned pgTAP checks again
 with fixture changes rolled back.
 
-The subsequent review follow-up preserves a known HTTP status and request ID
+The review follow-up at `a17801b` preserved a known HTTP status and request ID
 when response-body reading fails: 401/403 remain terminal permission errors,
 other terminal HTTP rejections stay terminal, and successful-response stream
 failures plus 408/429/5xx stay retryable. Transport diagnostics now include
@@ -55,7 +89,7 @@ truncation, without retaining raw cause objects. Its 24 added regressions first
 produced 22 failures and two passes, then passed after the repair. Full
 `pnpm verify` passed with 691 unit tests and all type/build/Harness/profile checks.
 
-`phase_aware_recovery_behavior_contract.sql` adds 10 behavioral checks using
+At `a17801b`, `phase_aware_recovery_behavior_contract.sql` added 10 behavioral checks using
 real accepted targets, terminal work transitions, the enqueue trigger, and the
 claim RPC. Both FAILED/CANCELED decision sources are fenced by accepted targets;
 all three later execution phases remain claimable. Missing S2 evidence consumes
@@ -63,13 +97,15 @@ no attempts, while a decision failure without accepted targets can recover once
 S2 evidence exists. A session-local mutation control cloned the claim function
 into `pg_temp` and removed its phase condition: all six later-phase assertions
 failed, proving the fixture catches the old unconditional fence. No public
-function was replaced. The normal `pnpm test:db:market-recovery` command now
-includes this fixture and passed all 48 planned pgTAP checks; every fixture write
+function was replaced. At that commit, `pnpm test:db:market-recovery`
+included this fixture and passed 48 planned pgTAP checks; every fixture write
 was rolled back, without disabling deadline guards or changing economic records.
 
-Both database migrations passed transactional preflight and were applied using
-the migration ledger; `pnpm test:db:market-recovery` then passed all 38 planned
-pgTAP checks with fixture changes rolled back. A read-only provider probe using
+During the initial repair (`6e085c4`), the first two database migrations passed
+transactional preflight and were applied using the migration ledger. The earlier,
+pre-behavioral-fixture `pnpm test:db:market-recovery` run passed 38 planned pgTAP
+checks with fixture changes rolled back; 38 is a historical total only.
+A read-only provider probe using
 the repaired Round calendar/source returned HTTP 200 for all 100 frozen symbols
 on the September 4 session. The full historical Round SQL fixture remains
 blocked by its expired real-time S1 plan deadline; it is not counted as passing.
