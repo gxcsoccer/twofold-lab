@@ -24,8 +24,10 @@ export interface ArenaCloseSnapshotRoundSchedule {
   readonly symbols: readonly string[];
   readonly source: ArenaCloseSnapshotFrozenSource;
   readonly s1SessionDate: string;
+  readonly s1CloseAt: string;
   readonly s1CloseAvailableAt: string;
   readonly s2SessionDate: string;
+  readonly s2CloseAt: string;
   readonly s2CloseAvailableAt: string;
 }
 
@@ -72,10 +74,12 @@ export function createArenaCloseSnapshotHandler(input: {
     const timing = stage === "S1_CLOSE"
       ? {
           sessionDate: schedule.s1SessionDate,
+          closeAt: schedule.s1CloseAt,
           availableAt: schedule.s1CloseAvailableAt,
         }
       : {
           sessionDate: schedule.s2SessionDate,
+          closeAt: schedule.s2CloseAt,
           availableAt: schedule.s2CloseAvailableAt,
         };
     if (item.scheduledAt !== timing.availableAt) {
@@ -96,7 +100,9 @@ export function createArenaCloseSnapshotHandler(input: {
       sourceEffectiveFrom: schedule.source.effectiveFrom,
     }), {
       targetSessionDate: timing.sessionDate,
-      endAt: timing.availableAt,
+      // Availability is when we may observe the close, not the bar query end.
+      endAt: timing.closeAt,
+      sessionCloseAvailableAt: timing.availableAt,
       ...(input.fetchImplementation === undefined
         ? {}
         : { fetchImplementation: input.fetchImplementation }),

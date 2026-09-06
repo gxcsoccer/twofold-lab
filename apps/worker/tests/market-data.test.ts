@@ -51,6 +51,21 @@ const responseBody = JSON.stringify({
 });
 
 describe("Alpaca real market-data adapter", () => {
+  it.each([401, 403, 429, 503])("classifies HTTP %s and preserves only safe provider diagnostics", async (status) => {
+    const error = await fetchAlpacaDailyBars(config, {
+      now: () => new Date("2026-08-23T00:00:00.000Z"),
+      fetchImplementation: vi.fn(async () => new Response(JSON.stringify({
+        message: "subscription does not permit querying recent SIP data test-secret-key",
+      }), { status, headers: { "x-request-id": "request-123" } })),
+    }).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({
+      code: status === 401 || status === 403 ? "ALPACA_PERMISSION_DENIED" : "ALPACA_TRANSIENT_FAILURE",
+      retryable: status !== 401 && status !== 403,
+    });
+    expect((error as Error).message).toContain("subscription does not permit querying recent SIP data");
+    expect((error as Error).message).toContain("request-123");
+    expect((error as Error).message).not.toContain("test-secret-key");
+  });
   it("loads only explicit server-side credentials and normalizes the allowlist", () => {
     expect(loadAlpacaMarketDataConfig({
       ALPACA_API_KEY_ID: "key",

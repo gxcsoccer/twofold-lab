@@ -67,8 +67,9 @@ import {
   type HarnessUsageAttemptKey,
 } from "./model-usage-buffer.js";
 import { sanitizeFailureMessage } from "./failure-safety.js";
+import { persistSafeSubmissionRejection } from "./submission-rejection.js";
 import { portfolioConstraintViolation } from "./arena-inputs.js";
-import { buildArenaDecisionAdmissionEvidence } from
+import { tryBuildArenaDecisionAdmissionEvidence } from
   "./arena-decision-evidence.js";
 import { importArenaRuntimePackage } from
   "./arena-runtime-package-manifest.js";
@@ -1263,12 +1264,16 @@ class ActiveArenaRun {
         );
       }
       const acceptedAt = this.now().toISOString();
-      const admissionEvidence = buildArenaDecisionAdmissionEvidence({
+      const admission = tryBuildArenaDecisionAdmissionEvidence({
         identity: this.prepared.identity,
         packet: this.packet,
         submission,
         acceptedAt,
       });
+      if (!admission.ok) {
+        return this.persistSubmissionRejection(admission.code, admission.reason);
+      }
+      const admissionEvidence = admission.evidence;
       if (admissionEvidence.guardAction !== "ALLOW") {
         return this.persistSubmissionRejection(
           "ADMISSION_GUARD_BLOCKED",
@@ -1308,12 +1313,13 @@ class ActiveArenaRun {
     code: string,
     reason: string,
   ): Promise<PortfolioTargetsResult> {
-    await this.appendThenProject(
+    return persistSafeSubmissionRejection(reason, (safeReason) => this.appendThenProject(
       "decision.submission_rejected",
       {
         decisionId: this.prepared.identity.decisionId,
         rootHarnessSessionId: this.rootSessionId,
         rejectionCode: code,
+        rejectionReason: safeReason,
       },
       () => {
         this.projection.submission = {
@@ -1323,8 +1329,7 @@ class ActiveArenaRun {
           rejectionCode: code,
         };
       },
-    );
-    return { status: "rejected" as const, reason };
+    ));
   }
 
   async finishFromHarness(): Promise<void> {

@@ -1,4 +1,5 @@
 import { sanitizeFailureMessage } from "./failure-safety.js";
+import { AlpacaRequestError } from "./alpaca-request-error.js";
 import type {
   ArenaWorkItem,
   ArenaWorkPhase,
@@ -112,6 +113,7 @@ export class ArenaWorkRunner {
       const completedAt = this.#now().toISOString();
       const deadlineExpired = missedDeadline(item.deadlineAt, completedAt);
       const terminal = error instanceof ArenaTerminalWorkError;
+      const provider = error instanceof AlpacaRequestError;
       await this.#queue.complete({
         workItemId: item.workItemId,
         leaseToken: item.leaseToken,
@@ -122,13 +124,14 @@ export class ArenaWorkRunner {
           ? "WORKER_ABORTED"
           : deadlineExpired
             ? "DEADLINE_EXPIRED_DURING_EXECUTION"
-            : terminal
+            : terminal || provider
               ? error.code
               : "ARENA_PHASE_FAILED",
         errorMessage: deadlineExpired
           ? "Work crossed its frozen deadline"
           : sanitizeFailureMessage(message, this.#failureEnvironment),
-        retryable: !signal.aborted && !deadlineExpired && !terminal,
+        retryable: !signal.aborted && !deadlineExpired && !terminal
+          && (!provider || error.retryable),
       });
       return "failed";
     }

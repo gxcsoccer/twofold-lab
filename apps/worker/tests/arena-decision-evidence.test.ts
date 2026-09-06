@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PortfolioTargetsSubmission } from "@twofold-lab/dsh-twofold";
 
-import { buildArenaDecisionAdmissionEvidence } from "../src/arena-decision-evidence.js";
+import { buildArenaDecisionAdmissionEvidence, tryBuildArenaDecisionAdmissionEvidence } from "../src/arena-decision-evidence.js";
 import type { ArenaInvocationIdentity } from "../src/arena-types.js";
 
 const snapshotId = "60000000-0000-4000-8000-000000000001";
@@ -66,6 +66,21 @@ const submission = Object.freeze({
 }) satisfies PortfolioTargetsSubmission;
 
 describe("Arena decision admission evidence", () => {
+  it("turns corrupt platform packet evidence into an explicit rejection, not an unrecorded tool exception", () => {
+    const result = tryBuildArenaDecisionAdmissionEvidence({ identity, submission,
+      acceptedAt: "2026-08-30T00:10:00.000Z",
+      packet: { ...packet, payload: { ...packet.payload, market_snapshot: {
+        ...packet.payload.market_snapshot, sealed_at: "2026-08-30T00:00:30.123456+00:00",
+      } } },
+    });
+    expect(result).toMatchObject({ ok: false, code: "ADMISSION_EVIDENCE_INVALID" });
+    if (!result.ok) expect(result.reason).toContain("canonical ISO UTC timestamp");
+  });
+  it("does not weaken the admission guards on the safe result path", () => {
+    const result = tryBuildArenaDecisionAdmissionEvidence({ identity, packet, submission,
+      acceptedAt: "2026-08-30T00:16:00.000Z" });
+    expect(result).toMatchObject({ ok: true, evidence: { guardAction: "BLOCK" } });
+  });
   it("derives freshness, jump, stability, target delta and cooldown from one packet", () => {
     const evidence = buildArenaDecisionAdmissionEvidence({
       identity,

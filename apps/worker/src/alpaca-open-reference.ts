@@ -1,4 +1,5 @@
 import { parse } from "lossless-json";
+import { AlpacaRequestError, withAlpacaTransportErrors } from "./alpaca-request-error.js";
 
 import { canonicalJson, sha256 } from "./arena-inputs.js";
 import { canonicalJsonNumber, PRIVATE_ARTIFACT_BUCKET } from "./market-data.js";
@@ -143,19 +144,21 @@ export async function fetchAlpacaOpenReferences(
   const requestFingerprint = sha256(requestUrl.toString());
   const providerSignal = boundedProviderSignal(options.signal);
 
-  const response = await (options.fetchImplementation ?? fetch)(requestUrl, {
-    method: "GET",
-    headers: {
-      "APCA-API-KEY-ID": config.apiKeyId,
-      "APCA-API-SECRET-KEY": config.apiSecretKey,
-      Accept: "application/json",
-    },
-    redirect: "error",
-    signal: providerSignal,
-  });
-  const rawBody = await response.text();
+  const response = await withAlpacaTransportErrors("open-reference", config, options.signal,
+    () => (options.fetchImplementation ?? fetch)(requestUrl, {
+      method: "GET",
+      headers: {
+        "APCA-API-KEY-ID": config.apiKeyId,
+        "APCA-API-SECRET-KEY": config.apiSecretKey,
+        Accept: "application/json",
+      },
+      redirect: "error",
+      signal: providerSignal,
+    }));
+  const rawBody = await withAlpacaTransportErrors("open-reference body", config, options.signal,
+    () => response.text(), response);
   if (!response.ok) {
-    throw new Error(`Alpaca open-reference request failed with HTTP ${response.status}`);
+    throw new AlpacaRequestError("open-reference", response, rawBody, config);
   }
   if (response.headers.get("content-type")?.split(";", 1)[0]?.trim()
     !== "application/json") {

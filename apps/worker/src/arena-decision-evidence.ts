@@ -15,8 +15,22 @@ import type {
 } from "@twofold-lab/dsh-twofold";
 
 import type { ArenaInvocationIdentity } from "./arena-types.js";
+import { sanitizeFailureMessage } from "./failure-safety.js";
 
 const ADMISSION_POLICY_REF = "twofold.arena_submission_admission/v1";
+
+/** Keep malformed platform evidence observable without relaxing its strict validation. */
+export function tryBuildArenaDecisionAdmissionEvidence(
+  input: Parameters<typeof buildArenaDecisionAdmissionEvidence>[0],
+): { readonly ok: true; readonly evidence: DecisionAdmissionEvidence }
+  | { readonly ok: false; readonly code: string; readonly reason: string } {
+  try {
+    return { ok: true, evidence: buildArenaDecisionAdmissionEvidence(input) };
+  } catch (error) {
+    return { ok: false, code: "ADMISSION_EVIDENCE_INVALID",
+      reason: sanitizeFailureMessage(error instanceof Error ? error.message : String(error)) };
+  }
+}
 
 /**
  * Derive every admission observation from the exact packet visible to the

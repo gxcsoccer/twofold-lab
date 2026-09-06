@@ -54,8 +54,10 @@ interface RoundRow {
   readonly season_id: string;
   readonly decision_snapshot_id: string;
   readonly s1_session_date: string;
+  readonly s1_close_at: string;
   readonly s1_close_available_at: string;
   readonly s2_session_date: string;
+  readonly s2_close_at: string;
   readonly cycle_ready_at: string;
 }
 
@@ -87,8 +89,10 @@ export class SupabaseArenaCloseSnapshotStore implements ArenaCloseSnapshotStore 
       symbols: decision.symbols,
       source: decision.source,
       s1SessionDate: round.s1_session_date,
+      s1CloseAt: new Date(round.s1_close_at).toISOString(),
       s1CloseAvailableAt: new Date(round.s1_close_available_at).toISOString(),
       s2SessionDate: round.s2_session_date,
+      s2CloseAt: new Date(round.s2_close_at).toISOString(),
       s2CloseAvailableAt: new Date(round.cycle_ready_at).toISOString(),
     });
   }
@@ -184,7 +188,7 @@ export class SupabaseArenaCloseSnapshotStore implements ArenaCloseSnapshotStore 
   async #round(roundId: string): Promise<RoundRow> {
     const result = await this.#client.from("arena_round")
       .select(
-        "round_id,season_id,decision_snapshot_id,s1_session_date,s1_close_available_at,s2_session_date,cycle_ready_at",
+        "round_id,season_id,decision_snapshot_id,s1_session_date,s1_close_at,s1_close_available_at,s2_session_date,s2_close_at,cycle_ready_at",
       )
       .eq("round_id", roundId)
       .single();

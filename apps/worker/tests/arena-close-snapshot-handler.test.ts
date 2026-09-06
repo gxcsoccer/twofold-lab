@@ -104,8 +104,10 @@ function store(
       symbols: ["LULU"],
       source: frozen,
       s1SessionDate: "2026-08-31",
+      s1CloseAt: "2026-08-31T20:00:00.000Z",
       s1CloseAvailableAt: "2026-08-31T20:20:00.000Z",
       s2SessionDate: "2026-09-01",
+      s2CloseAt: "2026-09-01T20:00:00.000Z",
       s2CloseAvailableAt: "2026-09-01T20:20:00.000Z",
     })),
     persist: vi.fn(async () => existing),
@@ -166,6 +168,31 @@ describe("Arena close-snapshot phase handler", () => {
     );
     expect(new URL(fetchImplementation.mock.calls[0]![0] as URL).searchParams
       .get("symbols")).toBe("LULU");
+    expect(new URL(fetchImplementation.mock.calls[0]![0] as URL).searchParams
+      .get("end")).toBe("2026-08-31T20:00:00.000Z");
+  });
+
+  it.each(["S1", "S2"] as const)("uses the frozen early close for %s, not a hard-coded UTC hour", async (stage) => {
+    const repository = store(null);
+    const schedule = await repository.schedule(item.roundId);
+    const session = stage === "S1" ? "2026-08-31" : "2026-09-01";
+    vi.mocked(repository.schedule).mockResolvedValue({
+      ...schedule,
+      s1CloseAt: "2026-08-31T17:00:00.000Z",
+      s1CloseAvailableAt: "2026-08-31T17:20:00.000Z",
+      s2CloseAt: "2026-09-01T17:00:00.000Z",
+      s2CloseAvailableAt: "2026-09-01T17:20:00.000Z",
+    });
+    vi.mocked(repository.persist).mockResolvedValue({ ...existing, stage: `${stage}_CLOSE` });
+    const fetchImplementation = vi.fn(async (_url: URL | RequestInfo) => new Response(JSON.stringify({
+      bars: { LULU: [{ t: `${session}T04:00:00Z`, o: 120, h: 121, l: 118,
+        c: 119, v: 100, n: 10, vw: 119 }] }, next_page_token: null,
+    }), { headers: { "content-type": "application/json" } }));
+    await createArenaCloseSnapshotHandler({ config, store: repository, fetchImplementation,
+      now: () => new Date(`${session}T17:20:00.000Z`),
+    })({ ...item, phase: `CAPTURE_${stage}_CLOSE`, scheduledAt: `${session}T17:20:00.000Z` }, new AbortController().signal);
+    expect(new URL(String(fetchImplementation.mock.calls[0]![0])).searchParams.get("end"))
+      .toBe(`${session}T17:00:00.000Z`);
   });
 
   it("seals the close under the source version the Round froze", async () => {
