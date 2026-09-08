@@ -73,19 +73,58 @@ export interface SubmitPortfolioTargetsArgs {
   decision_summary: string
 }
 
+/**
+ * A model-correctable refusal of submitted target weights.
+ *
+ * The submit tool validates arguments before the decision gateway is consulted,
+ * so a refusal thrown here is never recorded by the gateway and reaches the
+ * runtime only as an `isError` tool result. Carrying a closed `code` and the
+ * offending argument path means the decision projection can name the cause
+ * instead of reporting "no submission was ever made", and the one bounded
+ * corrective followup can tell the Agent which field to fix.
+ */
+export class PortfolioSubmissionArgumentError extends TypeError {
+  /** Closed code persisted by the decision projection. */
+  readonly code = 'SUBMISSION_ARGUMENTS_INVALID' as const
+
+  /** Argument path the Agent must correct, such as `targets[1].symbol`. */
+  readonly field: string
+
+  constructor(field: string, message: string) {
+    super(message)
+    this.name = 'PortfolioSubmissionArgumentError'
+    this.field = field
+  }
+}
+
+/** Reject a host-supplied string. Not model-correctable, so it stays untyped. */
 function nonEmpty(value: string, field: string): string {
   const normalized = value.trim()
   if (normalized.length === 0) throw new Error(`${field} must be a non-empty string`)
   return normalized
 }
 
+function submittedText(value: string, field: string): string {
+  const normalized = value.trim()
+  if (normalized.length === 0) {
+    throw new PortfolioSubmissionArgumentError(field, `${field} must be a non-empty string`)
+  }
+  return normalized
+}
+
 function basisPoints(value: string, field: string, allowZero: boolean): bigint {
   if (!CANONICAL_UNSIGNED_INTEGER.test(value)) {
-    throw new Error(`${field} must be a canonical non-negative decimal integer string`)
+    throw new PortfolioSubmissionArgumentError(
+      field,
+      `${field} must be a canonical non-negative decimal integer string`,
+    )
   }
   const parsed = BigInt(value)
   if ((!allowZero && parsed === 0n) || parsed > FULL_WEIGHT_BPS) {
-    throw new Error(`${field} must be ${allowZero ? 'from 0' : 'from 1'} through 10000 basis points`)
+    throw new PortfolioSubmissionArgumentError(
+      field,
+      `${field} must be ${allowZero ? 'from 0' : 'from 1'} through 10000 basis points`,
+    )
   }
   return parsed
 }
@@ -100,9 +139,12 @@ export function normalizePortfolioTargets(
   args: SubmitPortfolioTargetsArgs,
   sessionId: string,
 ): PortfolioTargetsSubmission {
-  const decisionPacketId = nonEmpty(args.decision_packet_id, 'decision_packet_id')
+  const decisionPacketId = submittedText(args.decision_packet_id, 'decision_packet_id')
   if (!SHA256.test(args.packet_sha256)) {
-    throw new Error('packet_sha256 must be exactly 64 lowercase hexadecimal characters')
+    throw new PortfolioSubmissionArgumentError(
+      'packet_sha256',
+      'packet_sha256 must be exactly 64 lowercase hexadecimal characters',
+    )
   }
   const cash = basisPoints(args.cash_weight_bps, 'cash_weight_bps', true)
 
@@ -110,10 +152,16 @@ export function normalizePortfolioTargets(
   let invested = 0n
   const targets: PortfolioTarget[] = args.targets.map((target, index) => {
     if (!SYMBOL.test(target.symbol)) {
-      throw new Error(`targets[${index}].symbol must be an uppercase ticker symbol`)
+      throw new PortfolioSubmissionArgumentError(
+        `targets[${index}].symbol`,
+        `targets[${index}].symbol must be an uppercase ticker symbol`,
+      )
     }
     if (seen.has(target.symbol)) {
-      throw new Error(`targets contains duplicate symbol ${JSON.stringify(target.symbol)}`)
+      throw new PortfolioSubmissionArgumentError(
+        `targets[${index}].symbol`,
+        `targets contains duplicate symbol ${JSON.stringify(target.symbol)}`,
+      )
     }
     seen.add(target.symbol)
     invested += basisPoints(target.target_weight_bps, `targets[${index}].target_weight_bps`, false)
@@ -127,7 +175,12 @@ export function normalizePortfolioTargets(
 
   const total = invested + cash
   if (total !== FULL_WEIGHT_BPS) {
-    throw new Error(`target weights plus cash_weight_bps must total exactly 10000 (got ${total.toString()})`)
+    // Derived rather than a literal argument path: no single field is wrong, the
+    // portfolio as a whole is not fully allocated.
+    throw new PortfolioSubmissionArgumentError(
+      'total_weight_bps',
+      `target weights plus cash_weight_bps must total exactly 10000 (got ${total.toString()})`,
+    )
   }
 
   return {
@@ -136,7 +189,7 @@ export function normalizePortfolioTargets(
     packet_sha256: args.packet_sha256,
     targets,
     cash_weight_bps: args.cash_weight_bps,
-    decision_summary: nonEmpty(args.decision_summary, 'decision_summary'),
+    decision_summary: submittedText(args.decision_summary, 'decision_summary'),
   }
 }
 

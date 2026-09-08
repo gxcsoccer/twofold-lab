@@ -1,0 +1,418 @@
+import { sanitizeFailureMessage } from "./failure-safety.js";
+import type { ArenaDecisionStatus } from "./arena-types.js";
+
+/**
+ * A decision that ends without an accepted target still has to say WHY, because
+ * the operator response differs per cause: a truncated root turn is a prompt or
+ * ceiling problem, a rejected submit_portfolio_targets call is an Agent
+ * reasoning problem, an exhausted budget is a cost problem, and a missed
+ * deadline is a scheduling problem. Collapsing all of them into
+ * NO_ACCEPTED_SUBMISSION - as Round 2 of private-us-liquid-100-s4 did for both
+ * entrants at once - hides which one happened.
+ *
+ * The six ArenaDecisionStatus values stay as they are: they are a durable
+ * projection contract read by the GUI. The discriminator is failureCode, whose
+ * vocabulary is closed here, so a reader can branch on the cause without
+ * parsing a human sentence. Both the code and the message pass through
+ * sanitizeFailureMessage: a provider failure code is upstream text and may
+ * quote a request URL carrying an ambient credential.
+ */
+export const ARENA_MAX_SUBMISSION_CORRECTIONS = 1;
+
+/**
+ * A corrective followup is worth spending only if the Agent can still read the
+ * instruction, emit a submission and have it admitted. Below this the frozen
+ * deadline would expire mid-turn and the retry would consume budget to produce
+ * SUBMISSION_DEADLINE_EXCEEDED anyway.
+ */
+export const ARENA_MINIMUM_CORRECTION_MILLISECONDS = 15_000;
+
+const MAX_FAILURE_CODE_LENGTH = 120;
+
+/**
+ * A rejection is correctable only when re-reading the same sealed packet could
+ * legitimately produce an accepted submission. DECISION_CLOSED and every
+ * admission verdict are excluded on purpose: the fence has already been
+ * decided against this submission, and asking again would either be futile or
+ * an attempt to talk past the guard.
+ */
+const CORRECTABLE_SUBMISSION_REJECTIONS: ReadonlySet<string> = new Set([
+  "ROOT_SESSION_REQUIRED",
+  "PACKET_FENCE_MISMATCH",
+  "PORTFOLIO_POLICY_VIOLATION",
+  "DESCENDANT_REQUIRED",
+  "SUBMISSION_ARGUMENTS_INVALID",
+  "SUBMISSION_TOOL_ERRORED",
+]);
+
+/** Longest tool-error text kept as a rejection reason. */
+const MAX_TOOL_ERROR_REASON_LENGTH = 512;
+
+export interface ArenaRootTurnEnd {
+  readonly kind: string;
+  readonly errorCode?: string | undefined;
+  readonly errorMessage?: string | undefined;
+  readonly abortKind?: string | undefined;
+}
+
+export interface ArenaSubmissionToolFailure {
+  readonly code: string;
+  readonly reason: string;
+}
+
+export interface ArenaDecisionFinishObservation {
+  readonly acceptedSubmissionId: string | null;
+  readonly providerBudgetDenied: boolean;
+  readonly descendantBudgetDenied: boolean;
+  readonly deadlineExceeded: boolean;
+  readonly rootTurnEnd: ArenaRootTurnEnd | undefined;
+  readonly submissionToolCalls: number;
+  readonly submissionToolFailures: number;
+  readonly lastSubmissionFailure: ArenaSubmissionToolFailure | null;
+  readonly correctionsSpent: number;
+}
+
+export interface ArenaDecisionOutcome {
+  readonly status: ArenaDecisionStatus;
+  readonly failureCode: string | null;
+  readonly failureMessage: string | null;
+  /** Whether one bounded corrective followup could still change the outcome. */
+  readonly correctable: boolean;
+}
+
+export function isCorrectableSubmissionRejection(code: string): boolean {
+  return CORRECTABLE_SUBMISSION_REJECTIONS.has(code);
+}
+
+export function arenaDecisionFinishOutcome(
+  observation: ArenaDecisionFinishObservation,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): ArenaDecisionOutcome {
+  const raw = classify(observation, environment);
+  // Success is structural: it requires the durable accepted submission id, so
+  // no classification path can report SUCCEEDED without one.
+  if (raw.status === "SUCCEEDED" && observation.acceptedSubmissionId === null) {
+    throw new TypeError("SUCCEEDED requires a durably accepted submission");
+  }
+  const budget = observation.correctionsSpent < ARENA_MAX_SUBMISSION_CORRECTIONS;
+  return Object.freeze({
+    status: raw.status,
+    failureCode: raw.failureCode,
+    failureMessage: raw.failureMessage,
+    correctable: raw.correctable && budget,
+  });
+}
+
+function classify(
+  observation: ArenaDecisionFinishObservation,
+  environment: Readonly<Record<string, string | undefined>>,
+): ArenaDecisionOutcome {
+  if (observation.acceptedSubmissionId !== null) {
+    return outcome("SUCCEEDED", null, null, false);
+  }
+
+  // Frozen-fence causes outrank every softer one: a budget or deadline that has
+  // already been spent cannot be re-entered, so the softer cause is a symptom.
+  if (observation.providerBudgetDenied || observation.descendantBudgetDenied) {
+    return outcome(
+      "BUDGET_EXHAUSTED",
+      "ARENA_BUDGET_EXHAUSTED",
+      "The shared provider, token, cost, or descendant budget was exhausted",
+      false,
+    );
+  }
+  if (observation.deadlineExceeded) {
+    return outcome(
+      "FAILED",
+      "SUBMISSION_DEADLINE_EXCEEDED",
+      "The decision did not produce an accepted submission before its deadline",
+      false,
+    );
+  }
+
+  const turnEnd = observation.rootTurnEnd;
+  if (turnEnd?.kind === "error") {
+    return outcome(
+      "FAILED",
+      safeCode(turnEnd.errorCode, "AGENT_TURN_FAILED", environment),
+      safeMessage(
+        turnEnd.errorMessage,
+        "The root Agent turn failed without a provider-supplied reason",
+        environment,
+      ),
+      false,
+    );
+  }
+  if (turnEnd?.kind === "aborted") {
+    return outcome(
+      "FAILED",
+      "AGENT_ABORTED",
+      `The root Agent was aborted (${turnEnd.abortKind ?? "unknown"})`,
+      false,
+    );
+  }
+
+  // A submit-tool failure is the most specific thing that can be said about a
+  // missing submission, so it is reported ahead of how the turn happened to
+  // end: Round 2's `twofold` entrant both failed the tool AND ended completed.
+  if (observation.submissionToolFailures > 0) {
+    const attempts =
+      `${observation.submissionToolFailures} of ${observation.submissionToolCalls}`;
+    const failure = observation.lastSubmissionFailure;
+    if (failure === null) {
+      return outcome(
+        "FAILED",
+        "SUBMISSION_TOOL_FAILED_WITHOUT_VERDICT",
+        `submit_portfolio_targets failed on ${attempts} call(s) without a`
+        + " structured verdict",
+        false,
+      );
+    }
+    const code = safeCode(failure.code, "SUBMISSION_TOOL_REJECTED", environment);
+    return outcome(
+      "FAILED",
+      // Codes minted on the submission surface already say so; a gateway
+      // verdict like PORTFOLIO_POLICY_VIOLATION needs the qualifier to state
+      // where it was refused.
+      code.startsWith("SUBMISSION_") ? code : `SUBMISSION_TOOL_REJECTED_${code}`,
+      `submit_portfolio_targets failed on ${attempts} call(s); the last`
+      + ` rejection was ${code}: ${safeMessage(
+        failure.reason,
+        "no reason was supplied",
+        environment,
+      )}`,
+      isCorrectableSubmissionRejection(failure.code),
+    );
+  }
+
+  if (turnEnd === undefined) {
+    return outcome(
+      "FAILED",
+      "ROOT_TURN_END_UNOBSERVED",
+      "The root Agent reached idle without an observed root turn end",
+      false,
+    );
+  }
+  switch (turnEnd.kind) {
+    case "max-tokens":
+      return outcome(
+        "FAILED",
+        "ROOT_OUTPUT_TRUNCATED",
+        "The root Agent reached its frozen output-token ceiling before"
+        + " submitting a target portfolio",
+        true,
+      );
+    case "blocked":
+      return outcome(
+        "FAILED",
+        "ROOT_TURN_BLOCKED",
+        "The root Agent turn was blocked before it could submit a target"
+        + " portfolio",
+        false,
+      );
+    case "interrupted":
+      return outcome(
+        "FAILED",
+        "ROOT_TURN_INTERRUPTED",
+        "The root Agent turn was interrupted before it could submit a target"
+        + " portfolio",
+        false,
+      );
+    case "completed":
+      // The only genuinely uninformative case left: the Agent had its turn,
+      // spent no budget it was denied, hit no ceiling, and simply never called
+      // the tool. That is what NO_ACCEPTED_SUBMISSION should have always meant.
+      return outcome(
+        "NO_ACCEPTED_SUBMISSION",
+        "NO_ACCEPTED_SUBMISSION",
+        "The root Agent completed its turn without calling"
+        + " submit_portfolio_targets",
+        true,
+      );
+    default:
+      // TurnEndReasonMap is merge-extensible, so an unknown kind is a real
+      // possibility after a Harness upgrade. Name it rather than silently
+      // filing it under a cause it was never observed to be.
+      return outcome(
+        "FAILED",
+        "ROOT_TURN_ENDED_UNRECOGNIZED",
+        `The root Agent turn ended for an unrecognized reason (${
+          safeCode(turnEnd.kind, "unknown", environment)
+        })`,
+        false,
+      );
+  }
+}
+
+function outcome(
+  status: ArenaDecisionStatus,
+  failureCode: string | null,
+  failureMessage: string | null,
+  correctable: boolean,
+): ArenaDecisionOutcome {
+  return Object.freeze({ status, failureCode, failureMessage, correctable });
+}
+
+function safeCode(
+  code: string | undefined,
+  fallback: string,
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  const safe = sanitizeFailureMessage(code ?? "", environment).trim();
+  if (safe === "") return fallback;
+  return safe.length <= MAX_FAILURE_CODE_LENGTH
+    ? safe
+    : safe.slice(0, MAX_FAILURE_CODE_LENGTH);
+}
+
+function safeMessage(
+  message: string | undefined,
+  fallback: string,
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  const safe = sanitizeFailureMessage(message ?? "", environment).trim();
+  return safe === "" ? fallback : safe;
+}
+
+/**
+ * Attribute every submit_portfolio_targets call to an outcome using only what
+ * the Harness Session stream reports plus the gateway's own verdicts.
+ *
+ * Both halves are needed. defineTool validates arguments against the tool
+ * schema and throws before the plugin body runs, so a JSON-number weight never
+ * reaches the gateway and the gateway can never report it - only the isError
+ * tool result proves it happened. Conversely a gateway rejection returns a
+ * normal, non-error result, so the event stream alone cannot tell it from a
+ * successful call. Round 2 of private-us-liquid-100-s4 hit the first case and
+ * the decision was filed as "never submitted".
+ */
+export class ArenaSubmissionToolTracker {
+  #calls = 0;
+  #failures = 0;
+  #lastFailure: ArenaSubmissionToolFailure | null = null;
+  #verdicts = 0;
+  /** Open submit calls mapped to the verdict count observed when they began. */
+  readonly #open = new Map<string, number>();
+
+  get calls(): number {
+    return this.#calls;
+  }
+
+  get failures(): number {
+    return this.#failures;
+  }
+
+  get lastFailure(): ArenaSubmissionToolFailure | null {
+    return this.#lastFailure;
+  }
+
+  openCall(callId: string): void {
+    if (this.#open.has(callId)) return;
+    this.#calls += 1;
+    this.#open.set(callId, this.#verdicts);
+  }
+
+  /** Record a verdict the gateway itself produced and durably persisted. */
+  recordGatewayRejection(code: string, reason: string): void {
+    this.#verdicts += 1;
+    this.#lastFailure = Object.freeze({ code, reason });
+  }
+
+  /**
+   * Close one observed submit call.
+   * @returns The failure attributed to this call, or `null` when the call
+   * succeeded or was never an open submit call.
+   */
+  closeCall(callId: string, input: {
+    readonly accepted: boolean;
+    readonly isError: boolean;
+    readonly errorText?: string | undefined;
+  }): ArenaSubmissionToolFailure | null {
+    const verdictsAtOpen = this.#open.get(callId);
+    if (verdictsAtOpen === undefined) return null;
+    this.#open.delete(callId);
+    if (input.accepted) return null;
+    this.#failures += 1;
+    // A verdict minted after this call opened belongs to it and is the most
+    // specific description available. An older verdict belongs to a previous
+    // call and must not be reused.
+    if (this.#verdicts > verdictsAtOpen && this.#lastFailure !== null) {
+      return this.#lastFailure;
+    }
+    const failure = Object.freeze(input.isError
+      ? {
+          code: "SUBMISSION_TOOL_ERRORED",
+          reason: boundedReason(input.errorText),
+        }
+      : {
+          code: "SUBMISSION_NOT_ACCEPTED",
+          reason:
+            "submit_portfolio_targets returned without a durably accepted target",
+        });
+    this.#lastFailure = failure;
+    return failure;
+  }
+}
+
+function boundedReason(text: string | undefined): string {
+  const trimmed = (text ?? "").trim();
+  if (trimmed === "") {
+    return "submit_portfolio_targets failed before the decision gateway was reached";
+  }
+  return trimmed.length <= MAX_TOOL_ERROR_REASON_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, MAX_TOOL_ERROR_REASON_LENGTH - 1)}…`;
+}
+
+export type ArenaSubmissionCorrection =
+  | { readonly allowed: false; readonly reason: string }
+  | { readonly allowed: true; readonly instruction: string };
+
+/**
+ * One followup, inside the fences that were already frozen. The correction
+ * neither extends the deadline nor raises the budget - it only asks whether
+ * what is left is enough to be worth using.
+ */
+export function arenaSubmissionCorrection(input: {
+  readonly outcome: ArenaDecisionOutcome;
+  readonly remainingMilliseconds: number;
+  readonly budgetExhausted: boolean;
+}): ArenaSubmissionCorrection {
+  if (!input.outcome.correctable || input.outcome.failureCode === null) {
+    return Object.freeze({
+      allowed: false,
+      reason: "the failure cannot be corrected inside the frozen decision fence",
+    });
+  }
+  if (input.budgetExhausted) {
+    return Object.freeze({
+      allowed: false,
+      reason: "the frozen decision budget has no remaining headroom",
+    });
+  }
+  if (
+    !Number.isFinite(input.remainingMilliseconds)
+    || input.remainingMilliseconds < ARENA_MINIMUM_CORRECTION_MILLISECONDS
+  ) {
+    return Object.freeze({
+      allowed: false,
+      reason: "the frozen submission deadline has no remaining headroom",
+    });
+  }
+  return Object.freeze({
+    allowed: true,
+    instruction: correctionInstruction(input.outcome),
+  });
+}
+
+function correctionInstruction(outcome: ArenaDecisionOutcome): string {
+  return [
+    `上一轮没有产生被接受的目标组合，原因代码 ${outcome.failureCode}：`,
+    `${outcome.failureMessage ?? "无附加说明"}。`,
+    "这是本次决策唯一一次纠正机会，截止时间与预算都不会因此放宽。",
+    "请直接调用 submit_portfolio_targets 提交一次合规目标权重：",
+    "沿用同一个 decision packet 的 decision_packet_id 与 packet_sha256，",
+    "所有 target_weight_bps 与 cash_weight_bps 之和必须正好是 10000，",
+    "并给出非空的 decision_summary。不要虚构订单、成交、费用、税或 NAV。",
+  ].join("");
+}

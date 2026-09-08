@@ -205,6 +205,78 @@ describe('assembled Twofold preset plugin', () => {
     }, execution() as never)).rejects.toThrow()
   })
 
+  it('reports a pre-gateway argument refusal so the decision can name the cause', async () => {
+    // Argument validation runs before the gateway is consulted, so a refusal here
+    // is invisible to the worker unless it is reported: Round 2 of
+    // private-us-liquid-100-s4 recorded no rejection event at all and the
+    // decision was filed as "never submitted".
+    const gateway = {
+      readDecisionPacket: vi.fn(),
+      submitPortfolioTargets: vi.fn(),
+      reportSubmissionFailure: vi.fn().mockResolvedValue(undefined),
+    }
+    const plugin = harnessDouble(gateway)
+    const submit = plugin.definitions.get('submit_portfolio_targets')
+    if (submit === undefined) throw new Error('missing submit tool')
+    const exec = execution('session-bound')
+
+    await expect(submit.execute({
+      decision_packet_id: 'packet-1',
+      packet_sha256: 'a'.repeat(64),
+      targets: [{ symbol: 'LULU', target_weight_bps: '9000' }],
+      cash_weight_bps: '999',
+      decision_summary: 'weights do not add up',
+    }, exec as never)).rejects.toThrow(/exactly 10000/)
+
+    expect(gateway.reportSubmissionFailure).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-bound',
+      code: 'SUBMISSION_ARGUMENTS_INVALID',
+      field: 'total_weight_bps',
+      reason: expect.stringContaining('exactly 10000'),
+    }))
+    expect(gateway.submitPortfolioTargets).not.toHaveBeenCalled()
+    expect(exec.concludeTurn).not.toHaveBeenCalled()
+  })
+
+  it('keeps the original refusal when the bridge cannot record it', async () => {
+    const gateway = {
+      readDecisionPacket: vi.fn(),
+      submitPortfolioTargets: vi.fn(),
+      reportSubmissionFailure: vi.fn().mockRejectedValue(new Error('projection unavailable')),
+    }
+    const plugin = harnessDouble(gateway)
+    const submit = plugin.definitions.get('submit_portfolio_targets')
+    if (submit === undefined) throw new Error('missing submit tool')
+
+    await expect(submit.execute({
+      decision_packet_id: 'packet-1',
+      packet_sha256: 'A'.repeat(64),
+      targets: [{ symbol: 'LULU', target_weight_bps: '9000' }],
+      cash_weight_bps: '1000',
+      decision_summary: 'uppercase fence',
+    }, execution() as never)).rejects.toThrow(/64 lowercase hexadecimal/)
+    expect(gateway.reportSubmissionFailure).toHaveBeenCalledOnce()
+    expect(gateway.submitPortfolioTargets).not.toHaveBeenCalled()
+  })
+
+  it('refuses malformed arguments even with no bridge to report them to', async () => {
+    for (const gateway of [
+      undefined,
+      { readDecisionPacket: vi.fn(), submitPortfolioTargets: vi.fn() },
+    ]) {
+      const plugin = harnessDouble(gateway)
+      const submit = plugin.definitions.get('submit_portfolio_targets')
+      if (submit === undefined) throw new Error('missing submit tool')
+      await expect(submit.execute({
+        decision_packet_id: 'packet-1',
+        packet_sha256: 'a'.repeat(64),
+        targets: [{ symbol: 'lulu', target_weight_bps: '9000' }],
+        cash_weight_bps: '1000',
+        decision_summary: 'lowercase ticker',
+      }, execution() as never)).rejects.toThrow(/uppercase ticker symbol/)
+    }
+  })
+
   it('binds gateway calls to the owning Session and concludes only an accepted submission', async () => {
     const gateway = {
       readDecisionPacket: vi.fn().mockResolvedValue({
