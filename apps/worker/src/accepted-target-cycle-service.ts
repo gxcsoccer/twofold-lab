@@ -79,6 +79,11 @@ export async function executeAcceptedTargetCycle(
     idempotencyKey: `${input.idempotencyKey}:plan:S1`,
     plannedAt: input.cycleInput.timeline.s1PlannedAt,
     plannedTradeDate: input.cycleInput.timeline.s1TradeDate,
+    // Carry whatever fence Core used, so this path admits exactly the plans the
+    // staged PREPARE_S1_ORDERS path admits.
+    ...(input.cycleInput.timeline.s1SessionOpenAt === undefined
+      ? {}
+      : { tradeSessionOpenAt: input.cycleInput.timeline.s1SessionOpenAt }),
     plan: cycle.s1.plan,
   });
   const s1Plan = await registerFrozenOrderPlanExact(client, s1Registration);
@@ -87,6 +92,9 @@ export async function executeAcceptedTargetCycle(
     idempotencyKey: `${input.idempotencyKey}:plan:S2`,
     plannedAt: input.cycleInput.timeline.s2PlannedAt,
     plannedTradeDate: input.cycleInput.timeline.s2TradeDate,
+    ...(input.cycleInput.timeline.s2SessionOpenAt === undefined
+      ? {}
+      : { tradeSessionOpenAt: input.cycleInput.timeline.s2SessionOpenAt }),
     plan: cycle.s2.plan,
   });
   const s2Plan = await registerFrozenOrderPlanExact(client, s2Registration);

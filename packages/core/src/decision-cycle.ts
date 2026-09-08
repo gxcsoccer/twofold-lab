@@ -96,11 +96,20 @@ export interface AcceptedTargetCycleInput {
     readonly decisionCutoffAt: string;
     readonly s1PlannedAt: string;
     readonly s1TradeDate: string;
+    /**
+     * Official open instant of `s1TradeDate`, when the caller holds an exchange
+     * calendar. It fences planning on the S1 market session rather than the UTC
+     * calendar date, so a decision accepted inside its published window remains
+     * plannable after UTC midnight.
+     */
+    readonly s1SessionOpenAt?: string;
     readonly s1ExecutedAt: string;
     readonly s1SettledAt: string;
     readonly s1CloseAt: string;
     readonly s2PlannedAt: string;
     readonly s2TradeDate: string;
+    /** Official open instant of `s2TradeDate`; see `s1SessionOpenAt`. */
+    readonly s2SessionOpenAt?: string;
     readonly s2ExecutedAt: string;
     readonly s2SettledAt: string;
     readonly navAsOf: string;
@@ -156,7 +165,11 @@ export type AcceptedTargetCycleS1PlanInput = Readonly<{
   account: AcceptedTargetCycleInput["account"];
   timeline: Pick<
     AcceptedTargetCycleInput["timeline"],
-    "decisionSessionDate" | "decisionCutoffAt" | "s1PlannedAt" | "s1TradeDate"
+    | "decisionSessionDate"
+    | "decisionCutoffAt"
+    | "s1PlannedAt"
+    | "s1TradeDate"
+    | "s1SessionOpenAt"
   >;
   instruments: readonly (Omit<
     AcceptedTargetCycleInstrument,
@@ -179,11 +192,13 @@ export type AcceptedTargetCycleThroughS1Input = Readonly<{
     | "decisionCutoffAt"
     | "s1PlannedAt"
     | "s1TradeDate"
+    | "s1SessionOpenAt"
     | "s1ExecutedAt"
     | "s1SettledAt"
     | "s1CloseAt"
     | "s2PlannedAt"
     | "s2TradeDate"
+    | "s2SessionOpenAt"
   >;
   instruments: readonly (Omit<AcceptedTargetCycleInstrument, "finalMark">)[];
   s1OfficialOpenByInstrument: AcceptedTargetCycleInput["s1OfficialOpenByInstrument"];
@@ -287,6 +302,9 @@ export function runAcceptedTargetCycle(
   const s2Execution = executeS2BuyOrders({
     plan: s2Plan,
     tradeDate: input.timeline.s2TradeDate,
+    ...(input.timeline.s2SessionOpenAt === undefined
+      ? {}
+      : { tradeSessionOpenAt: input.timeline.s2SessionOpenAt }),
     executedAt: input.timeline.s2ExecutedAt,
     officialOpenPrices: Object.fromEntries(
       Object.entries(input.s2OfficialOpenByInstrument).map(([id, value]) => [
@@ -489,6 +507,9 @@ function deriveS1Plan(input: AcceptedTargetCycleS1PlanInput): DerivedS1PlanState
     decisionCutoffAt: input.timeline.decisionCutoffAt,
     plannedAt: input.timeline.s1PlannedAt,
     s1TradeDate: input.timeline.s1TradeDate,
+    ...(input.timeline.s1SessionOpenAt === undefined
+      ? {}
+      : { s1SessionOpenAt: input.timeline.s1SessionOpenAt }),
     decisionCloseTaxReservedNav: decisionCloseNav.taxReservedNav,
     positions: [...positions.values()].map((position) => ({
       instrumentId: position.instrumentId,
@@ -577,6 +598,9 @@ function deriveThroughS1(
     s1SessionDate: input.timeline.s1TradeDate,
     plannedAt: input.timeline.s2PlannedAt,
     s2TradeDate: input.timeline.s2TradeDate,
+    ...(input.timeline.s2SessionOpenAt === undefined
+      ? {}
+      : { s2SessionOpenAt: input.timeline.s2SessionOpenAt }),
     preOrderTaxReservedNav: s1Nav.taxReservedNav,
     buyingPowerEvidence: {
       value: account.buyingPower,

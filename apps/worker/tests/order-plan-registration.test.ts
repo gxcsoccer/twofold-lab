@@ -295,3 +295,140 @@ describe("frozen order plan registration adapter", () => {
     expect(() => registration(plan)).toThrow("exceeds NUMERIC(38,12) precision");
   });
 });
+
+/**
+ * The registration adapter re-derives the planning window on the way to the DB,
+ * so its fence has to agree with the engine's. Otherwise a plan the engine
+ * legally froze against the S1 market session is refused here and
+ * PREPARE_S1_ORDERS can never complete for that Round.
+ */
+describe("market-session planning fence at DB admission", () => {
+  const S1_SESSION_OPEN_AT = "2026-08-25T13:30:00.000Z";
+  const S2_SESSION_OPEN_AT = "2026-08-26T13:30:00.000Z";
+  /** Legal: the decision window closes fifteen minutes before the S1 open. */
+  const ACCEPTED_AFTER_UTC_MIDNIGHT = "2026-08-25T13:14:00.000Z";
+
+  function lateS1Plan(plannedAt: string) {
+    return createS1SellOrderPlan({
+      decisionId: DECISION_ID,
+      decisionSessionDate: D,
+      decisionCutoffAt: D_CLOSE,
+      plannedAt,
+      s1TradeDate: S1,
+      s1SessionOpenAt: S1_SESSION_OPEN_AT,
+      slippageBps: "0",
+      fillPriceScale: 8,
+      taxAllocationScale: 12,
+      decisionCloseTaxReservedNav: "0",
+      positions: [{
+        instrumentId: INSTRUMENT_ID,
+        symbol: "LULU",
+        quantity: "1",
+        mark: closeEvidence("10", D, D_CLOSE),
+      }],
+      targets: [],
+      cashWeightBps: "10000",
+    });
+  }
+
+  it("admits an S1 plan frozen after UTC midnight but before the S1 open", () => {
+    const plan = lateS1Plan(ACCEPTED_AFTER_UTC_MIDNIGHT);
+    expect(plan.orders).toHaveLength(1);
+
+    expect(() => buildFrozenOrderPlanRegistration({
+      idempotencyKey: `${DECISION_ID}:S1`,
+      strategyAccountId: ACCOUNT_ID,
+      runId: RUN_ID,
+      acceptedSubmissionId: SUBMISSION_ID,
+      plannedAt: ACCEPTED_AFTER_UTC_MIDNIGHT,
+      plannedTradeDate: S1,
+      recordedBy: "twofold-worker",
+      plan,
+    })).toThrow("plannedAt must precede plannedTradeDate");
+
+    const admitted = buildFrozenOrderPlanRegistration({
+      idempotencyKey: `${DECISION_ID}:S1`,
+      strategyAccountId: ACCOUNT_ID,
+      runId: RUN_ID,
+      acceptedSubmissionId: SUBMISSION_ID,
+      plannedAt: ACCEPTED_AFTER_UTC_MIDNIGHT,
+      plannedTradeDate: S1,
+      tradeSessionOpenAt: S1_SESSION_OPEN_AT,
+      recordedBy: "twofold-worker",
+      plan,
+    });
+    expect(admitted.rpcArguments.p_planned_at).toBe(ACCEPTED_AFTER_UTC_MIDNIGHT);
+    expect(admitted.rpcArguments.p_trade_session_open_at).toBe(S1_SESSION_OPEN_AT);
+  });
+
+  it("keeps the session open instant out of the manifest and its digest", () => {
+    // The DB validates the manifest by exact key count, and the plan digest is
+    // the replay identity: an admission input must not enter either.
+    const plan = s2Plan();
+    const base = registration(plan);
+    const withOpen = buildFrozenOrderPlanRegistration({
+      idempotencyKey: `${DECISION_ID}:S2`,
+      strategyAccountId: ACCOUNT_ID,
+      runId: RUN_ID,
+      acceptedSubmissionId: SUBMISSION_ID,
+      plannedAt: S1_CLOSE,
+      plannedTradeDate: S2,
+      tradeSessionOpenAt: S2_SESSION_OPEN_AT,
+      recordedBy: "twofold-worker",
+      plan,
+    });
+    expect(withOpen.planCanonicalJson).toBe(base.planCanonicalJson);
+    expect(withOpen.planSha256).toBe(base.planSha256);
+    expect(withOpen.planCanonicalJson).not.toContain("SessionOpen");
+    expect(withOpen.planCanonicalJson).not.toContain(S2_SESSION_OPEN_AT);
+  });
+
+  it("still refuses a registration window that reaches its trade session open", () => {
+    // An order-free plan isolates the adapter's own fence: with no frozen order
+    // to cross-check, nothing but this check stands between the caller and the
+    // DB, so it has to refuse a window that has already reached the open.
+    const orderFreePlan = createS1SellOrderPlan({
+      decisionId: DECISION_ID,
+      decisionSessionDate: D,
+      decisionCutoffAt: D_CLOSE,
+      plannedAt: S1_PLAN_FROZEN_AT,
+      s1TradeDate: S1,
+      slippageBps: "0",
+      fillPriceScale: 8,
+      taxAllocationScale: 12,
+      decisionCloseTaxReservedNav: "100",
+      positions: [],
+      targets: [],
+      cashWeightBps: "10000",
+    });
+    expect(orderFreePlan.orders).toEqual([]);
+
+    for (const plannedAt of [S1_SESSION_OPEN_AT, "2026-08-25T15:00:00.000Z"]) {
+      expect(() => buildFrozenOrderPlanRegistration({
+        idempotencyKey: `${DECISION_ID}:S1`,
+        strategyAccountId: ACCOUNT_ID,
+        runId: RUN_ID,
+        acceptedSubmissionId: SUBMISSION_ID,
+        plannedAt,
+        plannedTradeDate: S1,
+        tradeSessionOpenAt: S1_SESSION_OPEN_AT,
+        recordedBy: "twofold-worker",
+        plan: orderFreePlan,
+      })).toThrow("plannedAt must precede the trade session open");
+    }
+  });
+
+  it("refuses a session open instant that does not belong to the trade date", () => {
+    expect(() => buildFrozenOrderPlanRegistration({
+      idempotencyKey: `${DECISION_ID}:S1`,
+      strategyAccountId: ACCOUNT_ID,
+      runId: RUN_ID,
+      acceptedSubmissionId: SUBMISSION_ID,
+      plannedAt: ACCEPTED_AFTER_UTC_MIDNIGHT,
+      plannedTradeDate: S1,
+      tradeSessionOpenAt: S2_SESSION_OPEN_AT,
+      recordedBy: "twofold-worker",
+      plan: lateS1Plan(ACCEPTED_AFTER_UTC_MIDNIGHT),
+    })).toThrow("tradeSessionOpenAt must fall on plannedTradeDate");
+  });
+});

@@ -192,6 +192,10 @@ function buildArenaS1Base(
       decisionCutoffAt: timestamp(decisionClose.cutoffAt, "decisionClose.cutoffAt"),
       s1PlannedAt: material.acceptedSubmission.acceptedAt,
       s1TradeDate: material.round.s1SessionDate,
+      // The decision window closes fifteen minutes before this instant, so a
+      // legal acceptance is routinely past UTC midnight on the S1 session date.
+      // The S1 market session is the real fence; the UTC date is not.
+      s1SessionOpenAt: material.round.s1OpenAt,
     }),
     instruments: Object.freeze(instruments),
     feeSchedules: DEFAULT_FUTU_FEE_SCHEDULES,
@@ -320,6 +324,18 @@ function buildArenaThroughS1Base(
   );
   if (s1SettledAt >= material.round.s2OpenAt) {
     throw new TypeError("S1 evidence was not complete before S2 open");
+  }
+  // Mirrors the database fence added by migration 202609010001, which refuses to
+  // create either S1 evidence row on or after the S2 session date. Repeating it
+  // here neither widens nor narrows that window: it only lets the worker name
+  // the cause instead of letting the Core engine reject the derived S2 planning
+  // instant with a message about calendar dates. No `s2SessionOpenAt` is passed
+  // to Core for the same reason - for S2 the sealed-evidence rule is the
+  // stricter one, and it already holds.
+  if (s1SettledAt.slice(0, 10) >= material.round.s2SessionDate) {
+    throw new TypeError(
+      "S1 evidence sealed on or after the S2 session date cannot carry an S2 plan",
+    );
   }
 
   return Object.freeze({

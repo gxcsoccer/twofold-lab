@@ -43,6 +43,10 @@ export function createArenaS1PlanHandler(input: {
       acceptedSubmissionId: material.acceptedSubmission.submissionId,
       plannedAt: material.acceptedSubmission.acceptedAt,
       plannedTradeDate: material.round.s1SessionDate,
+      // Same fence Core used to freeze this plan; without it a decision accepted
+      // inside its published window but after UTC midnight would be admitted by
+      // the engine and then refused on the way to the database.
+      tradeSessionOpenAt: material.round.s1OpenAt,
       recordedBy: input.recordedBy,
       plan: prepared.plan,
     });
