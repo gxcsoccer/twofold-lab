@@ -5,7 +5,7 @@ begin;
 -- observation separately so complete_evolution_cycle can reuse identical hashes
 -- without mistaking them for content conflicts.
 
-create table if not exists public.evolution_cycle_finding (
+create table public.evolution_cycle_finding (
   cycle_id uuid not null references public.evolution_cycle(cycle_id),
   finding_sha256 text not null references public.evolution_finding(finding_sha256),
   recorded_at timestamptz not null default clock_timestamp(),
@@ -14,6 +14,11 @@ create table if not exists public.evolution_cycle_finding (
 
 comment on table public.evolution_cycle_finding is
   'Associates a content-addressed evolution finding with every cycle that observed it; finding rows themselves stay immutable.';
+
+-- Rediscovery lookups filter by hash alone ("which cycles observed this
+-- finding?"), which the (cycle_id, finding_sha256) primary key cannot serve.
+create index evolution_cycle_finding_finding_sha256_idx
+  on public.evolution_cycle_finding (finding_sha256);
 
 insert into public.evolution_cycle_finding (cycle_id, finding_sha256)
 select cycle_id, finding_sha256
@@ -97,12 +102,14 @@ begin
       from public.evolution_finding
      where finding_sha256 = v_finding_sha;
 
+    -- Diagnostics stay machine-parseable on conflict_type but carry only
+    -- redacted identifier prefixes, never the full cycle id or finding hash.
     if not found then
       raise exception 'evolution finding hash was reused'
         using errcode = '23505',
               detail = format(
                 'conflict_type=missing_after_insert cycle_id=%s finding_sha256=%s',
-                p_cycle_id, v_finding_sha
+                left(p_cycle_id::text, 8), left(v_finding_sha, 12)
               );
     end if;
 
@@ -111,7 +118,7 @@ begin
         using errcode = '23505',
               detail = format(
                 'conflict_type=content_conflict cycle_id=%s finding_sha256=%s',
-                p_cycle_id, v_finding_sha
+                left(p_cycle_id::text, 8), left(v_finding_sha, 12)
               );
     end if;
 

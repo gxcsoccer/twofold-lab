@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(17);
+select plan(24);
 
 select ok(to_regclass('public.evolution_cycle_finding') is not null,
   'cycle-to-finding observations are durable without rewriting findings');
@@ -13,6 +13,12 @@ select ok(exists (
      and tgname = 'evolution_cycle_finding_is_immutable'
      and not tgisinternal
 ), 'cycle finding associations are immutable');
+select ok(exists (
+  select 1 from pg_indexes
+   where schemaname = 'public'
+     and tablename = 'evolution_cycle_finding'
+     and indexname = 'evolution_cycle_finding_finding_sha256_idx'
+), 'hash-only association lookups have a supporting index beside the primary key');
 
 set local role service_role;
 
@@ -207,6 +213,93 @@ select throws_ok(
   '23505',
   null,
   'same hash with different finding content still fails as a reuse conflict'
+);
+
+-- throws_ok only inspects SQLSTATE, so replay the same conflict and capture the
+-- raised DETAIL to prove identifiers are redacted rather than logged in full.
+create temporary table pgtap_conflict_detail (detail text);
+
+do $probe$
+declare
+  v_claim jsonb;
+  v_finding_sha text;
+  v_report_sha text;
+  v_detail text;
+begin
+  select claim into v_claim from pgtap_claim_conflict;
+  select finding_sha, report_sha_conflict into v_finding_sha, v_report_sha
+    from pgtap_finding_hash_reuse;
+  begin
+    perform public.complete_evolution_cycle(
+      (v_claim->>'cycleId')::uuid,
+      (v_claim->>'leaseToken')::uuid,
+      '[]'::jsonb,
+      jsonb_build_object(
+        'schema', 'twofold.evolution_analysis/v1',
+        'reportSha256', v_report_sha,
+        'findings', jsonb_build_array(jsonb_build_object(
+          'schema', 'twofold.evolution_finding/v1',
+          'findingSha256', v_finding_sha,
+          'scope', 'PLATFORM',
+          'subject', 'worker-a',
+          'lesson', 'Different lesson under the same hash must fail closed.',
+          'evidenceRefs', jsonb_build_array('arena_tick:pgtap-2')
+        ))
+      ),
+      v_report_sha,
+      'pgtap-hash-worker'
+    );
+  exception when unique_violation then
+    get stacked diagnostics v_detail = pg_exception_detail;
+    insert into pgtap_conflict_detail (detail) values (v_detail);
+  end;
+end;
+$probe$;
+
+select is(
+  (select count(*)::text from pgtap_conflict_detail),
+  '1',
+  'content-conflict rejection carries a diagnostic detail'
+);
+
+select ok(
+  strpos(
+    (select detail from pgtap_conflict_detail),
+    'conflict_type=content_conflict '
+  ) = 1,
+  'conflict diagnostics stay machine-parseable under a leading conflict_type key'
+);
+
+select ok(
+  strpos(
+    (select detail from pgtap_conflict_detail),
+    'cycle_id=' || left((select claim->>'cycleId' from pgtap_claim_conflict), 8)
+  ) > 0,
+  'conflict diagnostics carry only a redacted cycle id prefix'
+);
+
+select ok(
+  strpos(
+    (select detail from pgtap_conflict_detail),
+    (select claim->>'cycleId' from pgtap_claim_conflict)
+  ) = 0,
+  'conflict diagnostics never emit the full cycle id'
+);
+
+select ok(
+  strpos(
+    (select detail from pgtap_conflict_detail),
+    'finding_sha256=' || left((select finding_sha from pgtap_finding_hash_reuse), 12)
+  ) > 0,
+  'conflict diagnostics carry only a redacted finding hash prefix'
+);
+
+select ok(
+  strpos(
+    (select detail from pgtap_conflict_detail),
+    (select finding_sha from pgtap_finding_hash_reuse)
+  ) = 0,
+  'conflict diagnostics never emit the full finding hash'
 );
 
 select is(
