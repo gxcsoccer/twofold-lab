@@ -67,6 +67,12 @@ import {
   type HarnessUsageAttemptKey,
 } from "./model-usage-buffer.js";
 import { sanitizeFailureMessage } from "./failure-safety.js";
+import {
+  ArenaSubmissionToolTracker,
+  arenaDecisionFinishOutcome,
+  arenaSubmissionCorrection,
+  type ArenaDecisionFinishObservation,
+} from "./arena-decision-outcome.js";
 import { persistSafeSubmissionRejection } from "./submission-rejection.js";
 import { portfolioConstraintViolation } from "./arena-inputs.js";
 import { tryBuildArenaDecisionAdmissionEvidence } from
@@ -82,6 +88,8 @@ const RUNTIME_NAME = "twofold-arena-worker";
 const DEFAULT_TASK = `Execute the bound Twofold Arena portfolio decision now.
 
 Read the immutable decision packet first. You may delegate bounded, foreground research to the configured subagent when it materially improves the decision. Synthesize all evidence yourself and submit exactly one final target portfolio through submit_portfolio_targets. Do not use facts outside the packet and do not claim that orders or fills occurred.`;
+
+const SUBMIT_TOOL_NAME = "submit_portfolio_targets";
 
 const TRACKED_SESSION_EVENTS = new Set<SessionEvent["type"]>([
   "turn/start",
@@ -348,6 +356,23 @@ function eventTurnAndStep(event: SessionEvent): EventPayload {
   };
 }
 
+/**
+ * The model-facing text of one tool result. A failed submit call carries its
+ * cause only here: the block's `isError` flag says something went wrong and
+ * nothing else does.
+ */
+function toolResultText(block: {
+  readonly content: ReadonlyArray<{ readonly type: string }>;
+}): string | undefined {
+  for (const item of block.content) {
+    if (item.type === "text") {
+      const { text } = item as { readonly text?: unknown };
+      if (typeof text === "string" && text.trim() !== "") return text;
+    }
+  }
+  return undefined;
+}
+
 function sessionEventPayload(event: SessionEvent): EventPayload {
   const common: EventPayload = {
     harnessEventType: event.type,
@@ -473,6 +498,7 @@ class ActiveArenaRun {
   readonly activeSteps = new Map<string, { turn: number; step: number }>();
   readonly currentAttempts = new Map<string, AttemptRecord>();
   readonly turnEnds = new Map<string, TurnEndReason>();
+  readonly submissionTool = new ArenaSubmissionToolTracker();
   readonly attemptCostStatuses = new Map<
     string,
     Array<"estimated" | "unpriced" | "unavailable">
@@ -483,6 +509,7 @@ class ActiveArenaRun {
   deadlineExceeded = false;
   providerBudgetDenied = false;
   descendantBudgetDenied = false;
+  correctionsSpent = 0;
   terminal = false;
   submissionInFlight?: {
     readonly canonical: string;
@@ -792,8 +819,33 @@ class ActiveArenaRun {
       this.activeSteps.delete(sessionId);
     }
 
+    if (
+      event.type === "tool/call"
+      && sessionId === this.rootSessionId
+      && event.data.name === SUBMIT_TOOL_NAME
+    ) {
+      this.submissionTool.openCall(String(event.data.callId));
+    }
+
     if (event.type === "tool/result" && sessionId === this.rootSessionId) {
-      this.reservedDescendantCalls.delete(String(event.data.message.source.callId));
+      const callId = String(event.data.message.source.callId);
+      this.reservedDescendantCalls.delete(callId);
+      const block = event.data.message.content[0];
+      const failure = this.submissionTool.closeCall(callId, {
+        accepted: this.acceptedSubmission !== undefined,
+        isError: block.isError === true,
+        errorText: toolResultText(block),
+      });
+      // A gateway verdict was already appended by persistSubmissionRejection.
+      // This branch exists for the failures the gateway never saw: the tool
+      // schema rejects the arguments before the plugin body runs, so without
+      // this the only durable trace is an isError flag with no cause.
+      if (failure !== null && failure.code === "SUBMISSION_TOOL_ERRORED") {
+        this.serial.background(() => this.persistSubmissionToolFailure(
+          failure.code,
+          failure.reason,
+        ));
+      }
     }
 
     if (!TRACKED_SESSION_EVENTS.has(event.type)) return;
@@ -1313,15 +1365,71 @@ class ActiveArenaRun {
     code: string,
     reason: string,
   ): Promise<PortfolioTargetsResult> {
-    return persistSafeSubmissionRejection(reason, (safeReason) => this.appendThenProject(
-      "decision.submission_rejected",
+    return persistSafeSubmissionRejection(reason, (safeReason) => {
+      this.submissionTool.recordGatewayRejection(code, safeReason);
+      return this.appendThenProject(
+        "decision.submission_rejected",
+        {
+          decisionId: this.prepared.identity.decisionId,
+          rootHarnessSessionId: this.rootSessionId,
+          rejectionCode: code,
+          rejectionReason: safeReason,
+        },
+        () => {
+          this.projection.submission = {
+            status: "REJECTED",
+            acceptedSubmissionId: null,
+            acceptedAt: null,
+            rejectionCode: code,
+          };
+        },
+      );
+    });
+  }
+
+  /**
+   * Record a submission the Harness tool refused before this gateway could rule
+   * on it. There is no admission decision to make: the target never became a
+   * candidate. The report only makes the cause durable and gives the bounded
+   * correction a field to name, so it can never accept anything.
+   */
+  async recordRefusedSubmission(
+    code: string,
+    field: string,
+    reason: string,
+  ): Promise<void> {
+    const detail = reason.startsWith(field) ? reason : `${field}: ${reason}`;
+    await this.serial.run(async () => {
+      // Counts as a verdict for the submit call that is still open, so the
+      // tool/result observer reports this precise code rather than the
+      // transport-level SUBMISSION_TOOL_ERRORED.
+      this.submissionTool.recordGatewayRejection(code, sanitizeFailureMessage(detail));
+      await this.persistSubmissionToolFailure(code, detail, field);
+    });
+  }
+
+  /**
+   * Record a submit call that failed before any gateway verdict existed. The
+   * projection keeps an accepted submission untouched: a later failed retry
+   * cannot un-accept a target that is already durable.
+   */
+  private async persistSubmissionToolFailure(
+    code: string,
+    reason: string,
+    field?: string,
+  ): Promise<void> {
+    const safeReason = sanitizeFailureMessage(reason);
+    await this.appendThenProject(
+      "decision.submission_tool_failed",
       {
         decisionId: this.prepared.identity.decisionId,
         rootHarnessSessionId: this.rootSessionId,
         rejectionCode: code,
         rejectionReason: safeReason,
+        ...(field === undefined ? {} : { rejectionField: field }),
       },
       () => {
+        if (this.projection.submission.status === "ACCEPTED") return;
         this.projection.submission = {
           status: "REJECTED",
           acceptedSubmissionId: null,
@@ -1329,42 +1437,75 @@ class ActiveArenaRun {
           rejectionCode: code,
         };
       },
+    );
+  }
+
+  finishObservation(): ArenaDecisionFinishObservation {
+    const rootReason = this.turnEnds.get(this.rootSessionId);
+    return Object.freeze({
+      acceptedSubmissionId: this.acceptedSubmission?.submissionId ?? null,
+      providerBudgetDenied: this.providerBudgetDenied,
+      descendantBudgetDenied: this.descendantBudgetDenied,
+      deadlineExceeded: this.deadlineExceeded,
+      rootTurnEnd: rootReason === undefined
+        ? undefined
+        : Object.freeze({
+            kind: rootReason.kind,
+            ...(rootReason.kind === "error"
+              ? {
+                  errorCode: rootReason.error.code,
+                  errorMessage: rootReason.error.message,
+                }
+              : {}),
+            ...(rootReason.kind === "aborted"
+              ? { abortKind: rootReason.reason.kind }
+              : {}),
+          }),
+      submissionToolCalls: this.submissionTool.calls,
+      submissionToolFailures: this.submissionTool.failures,
+      lastSubmissionFailure: this.submissionTool.lastFailure,
+      correctionsSpent: this.correctionsSpent,
+    });
+  }
+
+  /**
+   * Spend at most one corrective followup inside the fences that were already
+   * frozen. Nothing here extends the deadline, raises the budget, reopens a
+   * closed decision, or relaxes admission - it only re-asks the Agent for a
+   * compliant submission while its own frozen window is still open.
+   */
+  async correctSubmissionOnce(handle: AgentHandle): Promise<void> {
+    if (this.terminal || this.acceptedSubmission !== undefined) return;
+    const outcome = arenaDecisionFinishOutcome(this.finishObservation());
+    const correction = arenaSubmissionCorrection({
+      outcome,
+      remainingMilliseconds: this.deadlineAt - this.now().getTime(),
+      budgetExhausted: this.providerLimitReached(),
+    });
+    if (!correction.allowed) return;
+    this.correctionsSpent += 1;
+    await this.serial.run(() => this.appendThenProject(
+      "decision.submission_correction_requested",
+      {
+        decisionId: this.prepared.identity.decisionId,
+        rootHarnessSessionId: this.rootSessionId,
+        rejectionCode: outcome.failureCode ?? "UNKNOWN",
+        correctionOrdinal: String(this.correctionsSpent),
+      },
+      () => undefined,
     ));
+    handle.agent.followup(createUserMessage({
+      content: [{ type: "text", text: correction.instruction }],
+      source: { kind: "user" },
+    }));
+    await handle.agent.whenIdle();
   }
 
   async finishFromHarness(): Promise<void> {
     await this.finalizeOutstandingAttempts();
     if (this.terminal) return;
-    const rootReason = this.turnEnds.get(this.rootSessionId);
-    let status: ArenaDecisionStatus;
-    let failureCode: string | null;
-    let failureMessage: string | null;
-    if (this.acceptedSubmission !== undefined) {
-      status = "SUCCEEDED";
-      failureCode = null;
-      failureMessage = null;
-    } else if (this.providerBudgetDenied || this.descendantBudgetDenied) {
-      status = "BUDGET_EXHAUSTED";
-      failureCode = "ARENA_BUDGET_EXHAUSTED";
-      failureMessage = "The shared provider, token, cost, or descendant budget was exhausted";
-    } else if (this.deadlineExceeded) {
-      status = "FAILED";
-      failureCode = "SUBMISSION_DEADLINE_EXCEEDED";
-      failureMessage = "The decision did not produce an accepted submission before its deadline";
-    } else if (rootReason?.kind === "error") {
-      status = "FAILED";
-      failureCode = rootReason.error.code;
-      failureMessage = rootReason.error.message;
-    } else if (rootReason?.kind === "aborted") {
-      status = "FAILED";
-      failureCode = "AGENT_ABORTED";
-      failureMessage = `The root Agent was aborted (${rootReason.reason.kind})`;
-    } else {
-      status = "NO_ACCEPTED_SUBMISSION";
-      failureCode = "NO_ACCEPTED_SUBMISSION";
-      failureMessage = "The root Agent reached idle without a durably accepted target portfolio";
-    }
-    await this.finish(status, failureCode, failureMessage);
+    const outcome = arenaDecisionFinishOutcome(this.finishObservation());
+    await this.finish(outcome.status, outcome.failureCode, outcome.failureMessage);
   }
 
   async fail(code: string, message: string): Promise<void> {
@@ -1561,6 +1702,20 @@ class ArenaCoordinator implements TwofoldDecisionGateway {
     const { signal: _signal, ...submission } = input;
     return run.acceptSubmission(submission);
   }
+
+  async reportSubmissionFailure(input: {
+    sessionId: string;
+    code: string;
+    field: string;
+    reason: string;
+    signal: AbortSignal;
+  }): Promise<void> {
+    // No throwIfAborted: an abort is exactly when the cause is most worth
+    // keeping, and the report neither reads the packet nor accepts a target.
+    const run = this.runsByRoot.get(input.sessionId);
+    if (run === undefined) return;
+    await run.recordRefusedSubmission(input.code, input.field, input.reason);
+  }
 }
 
 export class ArenaRuntime {
@@ -1747,6 +1902,7 @@ export class ArenaRuntime {
             source: { kind: "user" },
           }));
           await handle.agent.whenIdle();
+          if (!signal.aborted) await run.correctSubmissionOnce(handle);
           if (signal.aborted) {
             await run.fail("WORKER_ABORTED", "The Arena worker aborted the active decision");
           } else {

@@ -39,6 +39,14 @@ export interface ArenaAgentDecisionResult {
   readonly totalBillableTokens: string;
   readonly estimatedCostUsd: string | null;
   readonly costStatus: string;
+  /**
+   * Structured cause from the decision projection, present only on failure. The
+   * six ArenaDecisionStatus values cannot distinguish a truncated root turn
+   * from a rejected submit call from a plain non-submission, so the queue's
+   * error_code reads this instead of the status.
+   */
+  readonly failureCode?: string;
+  readonly failureMessage?: string;
 }
 
 export type ArenaAgentDecisionExecution = (
@@ -131,9 +139,19 @@ export function createArenaAgentDecisionHandler(input: {
     }
     const result = await input.execute(item, signal);
     if (result.status !== "SUCCEEDED" || result.acceptedSubmissionId === null) {
+      // A SUCCEEDED status with no submission id would be a runtime invariant
+      // break, not a decision outcome, so it gets its own code rather than
+      // being reported as the success it claims to be.
+      const code = result.status === "SUCCEEDED"
+        ? "ACCEPTED_SUBMISSION_MISSING"
+        : result.failureCode ?? result.status;
+      const detail = result.failureMessage === undefined
+        ? ""
+        : `: ${result.failureMessage}`;
       throw new ArenaTerminalWorkError(
-        result.status,
-        `Arena Agent ended as ${result.status} without one accepted target`,
+        code,
+        `Arena Agent ended as ${result.status} (${code})${detail}`
+        + " without one accepted target",
       );
     }
     return Object.freeze({ outcome: "ACCEPTED_TARGET", ...result });
@@ -297,10 +315,13 @@ export function createRealArenaAgentDecisionExecution(input: {
         task: taskForPreset(seat.identity.presetId),
       });
       const projection = execution.projection;
+      const { failureCode, failureMessage } = projection.decision;
       return Object.freeze({
         decisionId: prepared.identity.decisionId,
         status: projection.decision.status,
         acceptedSubmissionId: projection.submission.acceptedSubmissionId,
+        ...(failureCode === null ? {} : { failureCode }),
+        ...(failureMessage === null ? {} : { failureMessage }),
         agentCount: String(projection.agents.length),
         providerDispatchAttempts: projection.treeUsage.providerRequestCount,
         totalBillableTokens: projection.treeUsage.totalBillableTokens,

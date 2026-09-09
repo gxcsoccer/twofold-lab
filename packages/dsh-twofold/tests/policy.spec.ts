@@ -3,12 +3,14 @@ import {
   LOCKED_MODEL,
   LOCKED_PROVIDER,
   ORCHESTRATOR_ALLOWED_TOOL_NAMES,
+  PortfolioSubmissionArgumentError,
   denyUnapprovedTool,
   lockModelRequest,
   normalizePortfolioTargets,
   validateDecisionPacketResult,
   validatePortfolioTargetsResult,
 } from '../src/index.js'
+import type { SubmitPortfolioTargetsArgs } from '../src/index.js'
 
 describe('DeepSeek V4 Pro request lock', () => {
   it('overwrites provider and model while preserving other request settings', () => {
@@ -91,6 +93,62 @@ describe('portfolio target validation', () => {
       targets: [{ symbol: 'LULU', target_weight_bps: '-9000' }],
       cash_weight_bps: '1000',
     }, 'session-1')).toThrow(/canonical non-negative decimal integer string/)
+  })
+})
+
+describe('structured submission argument rejections', () => {
+  const valid: SubmitPortfolioTargetsArgs = {
+    decision_packet_id: 'packet-1',
+    packet_sha256: 'a'.repeat(64),
+    targets: [{ symbol: 'LULU', target_weight_bps: '9000' }],
+    cash_weight_bps: '1000',
+    decision_summary: 'rebalance',
+  }
+
+  function rejection(args: SubmitPortfolioTargetsArgs): PortfolioSubmissionArgumentError {
+    try {
+      normalizePortfolioTargets(args, 'session-1')
+    } catch (error) {
+      if (error instanceof PortfolioSubmissionArgumentError) return error
+      throw error
+    }
+    throw new Error('normalizePortfolioTargets accepted an invalid submission')
+  }
+
+  it('names one durable code and the offending field for every refusal', () => {
+    const cases: Array<[SubmitPortfolioTargetsArgs, string]> = [
+      [{ ...valid, decision_packet_id: '  ' }, 'decision_packet_id'],
+      [{ ...valid, packet_sha256: 'ABC' }, 'packet_sha256'],
+      [{ ...valid, cash_weight_bps: '01000' }, 'cash_weight_bps'],
+      [{ ...valid, targets: [{ symbol: 'lulu', target_weight_bps: '9000' }] }, 'targets[0].symbol'],
+      [
+        {
+          ...valid,
+          targets: [
+            { symbol: 'LULU', target_weight_bps: '9000' },
+            { symbol: 'LULU', target_weight_bps: '1' },
+          ],
+        },
+        'targets[1].symbol',
+      ],
+      [
+        { ...valid, targets: [{ symbol: 'LULU', target_weight_bps: '-9000' }] },
+        'targets[0].target_weight_bps',
+      ],
+      [{ ...valid, decision_summary: ' ' }, 'decision_summary'],
+      [{ ...valid, cash_weight_bps: '999' }, 'total_weight_bps'],
+    ]
+    for (const [args, field] of cases) {
+      const error = rejection(args)
+      expect(error.code).toBe('SUBMISSION_ARGUMENTS_INVALID')
+      expect(error.field).toBe(field)
+      expect(error.message.length).toBeGreaterThan(0)
+      expect(error).toBeInstanceOf(TypeError)
+    }
+  })
+
+  it('keeps a valid submission free of any rejection', () => {
+    expect(normalizePortfolioTargets(valid, 'session-1').cash_weight_bps).toBe('1000')
   })
 })
 

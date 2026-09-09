@@ -5,7 +5,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions, pg_temp;
 
-select plan(92);
+select plan(95);
 
 create or replace function pg_temp.contract_buy_postings()
 returns jsonb
@@ -809,7 +809,8 @@ create or replace function pg_temp.register_contract_order_plan(
   p_run_id uuid default '70000000-0000-4000-8000-000000000001',
   p_decision_id uuid default '72000000-0000-4000-8000-000000000001',
   p_accepted_submission_id uuid
-    default '72000000-0000-4000-8000-000000000002'
+    default '72000000-0000-4000-8000-000000000002',
+  p_trade_session_open_at timestamptz default null
 )
 returns public.frozen_order_plan
 language sql
@@ -838,7 +839,8 @@ as $$
     'twofold.frozen_order_plan/v1',
     p_plan_canonical_json,
     pg_temp.contract_sha256(p_plan_canonical_json),
-    'accounting-contract'
+    'accounting-contract',
+    p_trade_session_open_at
   )
 $$;
 
@@ -1825,6 +1827,178 @@ select throws_ok(
   '22023',
   'frozen order plan admission has already entered its UTC trade date',
   'a new plan remains fail-closed after the trusted trade-date cutoff'
+);
+
+-- The UTC trade date was only ever a proxy for the market session, and it is
+-- strictly narrower than the rule the exchange publishes: a decision window
+-- can close after UTC midnight on the trade date, so a plan frozen inside that
+-- published window is refused for a boundary the market does not recognise and
+-- the Round can never prepare its orders. The Arena registration RPCs already
+-- fence on arena_round.s1_open_at / s2_open_at; naming the same official open
+-- here moves the accounting kernel onto the market session too. Omitting it
+-- keeps the proxy, so both cases above still hold byte-for-byte.
+create or replace function pg_temp.contract_trade_session_open(
+  p_trade_date date
+)
+returns timestamptz
+language sql
+volatile
+set search_path = public, extensions, pg_temp
+as $$
+  -- The suite runs at whatever hour it is invoked, so a still-future open has
+  -- to come from the trusted clock rather than a literal 13:30Z. It is clamped
+  -- to the trade date because the kernel refuses an open that belongs to
+  -- another day.
+  select least(
+    clock_timestamp() + interval '1 hour',
+    ((p_trade_date + 1)::timestamp at time zone 'UTC')
+      - interval '1 microsecond'
+  )
+$$;
+
+create temporary table accounting_session_fence_context (
+  planned_at timestamptz not null,
+  planned_trade_date date not null,
+  passed_session_open_at timestamptz not null,
+  next_day_session_open_at timestamptz not null
+) on commit drop;
+
+insert into accounting_session_fence_context (
+  planned_at,
+  planned_trade_date,
+  passed_session_open_at,
+  next_day_session_open_at
+)
+select
+  context.planned_at,
+  derived.trade_date,
+  derived.trade_date::timestamp at time zone 'UTC',
+  ((derived.trade_date + 1)::timestamp at time zone 'UTC')
+    + interval '13 hours 30 minutes'
+from accounting_order_plan_context as context
+cross join lateral (
+  select (context.planned_at at time zone 'UTC')::date as trade_date
+) as derived;
+
+select throws_ok(
+  $$
+    select pg_temp.register_contract_order_plan(
+      'accounting-contract:order-plan:session-open-wrong-date',
+      'S2',
+      pg_temp.contract_order_plan_text(
+        'S2',
+        'order-buy-session-open-wrong-date',
+        'BUY',
+        '10',
+        pg_temp.contract_fee_schedule_terms(),
+        p_planned_at => (
+          select planned_at from accounting_session_fence_context
+        ),
+        p_planned_trade_date => (
+          select planned_trade_date from accounting_session_fence_context
+        ),
+        p_decision_id => '72000000-0000-4000-8000-000000000101',
+        p_accepted_submission_id =>
+          '72000000-0000-4000-8000-000000000102'
+      ),
+      p_planned_at => (
+        select planned_at from accounting_session_fence_context
+      ),
+      p_planned_trade_date => (
+        select planned_trade_date from accounting_session_fence_context
+      ),
+      p_decision_id => '72000000-0000-4000-8000-000000000101',
+      p_accepted_submission_id =>
+        '72000000-0000-4000-8000-000000000102',
+      p_trade_session_open_at => (
+        select next_day_session_open_at from accounting_session_fence_context
+      )
+    )
+  $$,
+  '22023',
+  'frozen order plan trade session open must fall on its planned trade date',
+  'a caller cannot widen the fence by naming another session as the open'
+);
+
+select throws_ok(
+  $$
+    select pg_temp.register_contract_order_plan(
+      'accounting-contract:order-plan:session-open-passed',
+      'S2',
+      pg_temp.contract_order_plan_text(
+        'S2',
+        'order-buy-session-open-passed',
+        'BUY',
+        '10',
+        pg_temp.contract_fee_schedule_terms(),
+        p_planned_at => (
+          select planned_at from accounting_session_fence_context
+        ),
+        p_planned_trade_date => (
+          select planned_trade_date from accounting_session_fence_context
+        ),
+        p_decision_id => '72000000-0000-4000-8000-000000000101',
+        p_accepted_submission_id =>
+          '72000000-0000-4000-8000-000000000102'
+      ),
+      p_planned_at => (
+        select planned_at from accounting_session_fence_context
+      ),
+      p_planned_trade_date => (
+        select planned_trade_date from accounting_session_fence_context
+      ),
+      p_decision_id => '72000000-0000-4000-8000-000000000101',
+      p_accepted_submission_id =>
+        '72000000-0000-4000-8000-000000000102',
+      p_trade_session_open_at => (
+        select passed_session_open_at from accounting_session_fence_context
+      )
+    )
+  $$,
+  '22023',
+  'frozen order plan admission has already reached its trade session open',
+  'a plan that arrives once its session has opened is still truly late'
+);
+
+select is(
+  (
+    pg_temp.register_contract_order_plan(
+      'accounting-contract:order-plan:session-open-admitted',
+      'S2',
+      pg_temp.contract_order_plan_text(
+        'S2',
+        'order-buy-session-open-admitted',
+        'BUY',
+        '10',
+        pg_temp.contract_fee_schedule_terms(),
+        p_planned_at => (
+          select planned_at from accounting_session_fence_context
+        ),
+        p_planned_trade_date => (
+          select planned_trade_date from accounting_session_fence_context
+        ),
+        p_decision_id => '72000000-0000-4000-8000-000000000101',
+        p_accepted_submission_id =>
+          '72000000-0000-4000-8000-000000000102'
+      ),
+      p_planned_at => (
+        select planned_at from accounting_session_fence_context
+      ),
+      p_planned_trade_date => (
+        select planned_trade_date from accounting_session_fence_context
+      ),
+      p_decision_id => '72000000-0000-4000-8000-000000000101',
+      p_accepted_submission_id =>
+        '72000000-0000-4000-8000-000000000102',
+      p_trade_session_open_at => pg_temp.contract_trade_session_open(
+        (select planned_trade_date from accounting_session_fence_context)
+      )
+    )
+  ).planned_trade_date::text,
+  (
+    select planned_trade_date::text from accounting_session_fence_context
+  ),
+  'a named session open admits a plan frozen after UTC midnight before it'
 );
 
 select throws_ok(

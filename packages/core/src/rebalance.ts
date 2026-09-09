@@ -449,11 +449,22 @@ export function assertFrozenOrderPlanIntegrity(
   }
 }
 
+/**
+ * A plan may only be written before the session it trades in.
+ *
+ * `tradeSessionOpenAt` is the official open instant of `plannedTradeDate`. When
+ * a caller can name it, the fence is that instant: evidence sealed during the
+ * previous session stays legal however late in the UTC day it is consumed,
+ * which is the whole point of freezing it. When no calendar is available the
+ * older UTC-date proxy stands unchanged - it is strictly narrower than the
+ * session rule, so the default can only refuse more, never less.
+ */
 function validatePlanningWindow(
   referenceSessionDate: string,
   plannedAt: string,
   plannedTradeDate: string,
   field: string,
+  tradeSessionOpenAt?: string,
 ): void {
   requireCalendarDate(referenceSessionDate, `${field}.referenceSessionDate`);
   requireIsoTimestamp(plannedAt, `${field}.plannedAt`);
@@ -463,9 +474,25 @@ function validatePlanningWindow(
       `${field}.plannedTradeDate must follow the reference session date`,
     );
   }
-  if (plannedAt.slice(0, 10) >= plannedTradeDate) {
+  if (tradeSessionOpenAt === undefined) {
+    if (plannedAt.slice(0, 10) >= plannedTradeDate) {
+      throw new RangeError(
+        `${field}.plannedAt must precede the planned trade date`,
+      );
+    }
+    return;
+  }
+  requireIsoTimestamp(tradeSessionOpenAt, `${field}.tradeSessionOpenAt`);
+  // Without this the fence could be widened arbitrarily by naming a later
+  // session's open. Every venue this engine trades opens on its own UTC date.
+  if (tradeSessionOpenAt.slice(0, 10) !== plannedTradeDate) {
     throw new RangeError(
-      `${field}.plannedAt must precede the planned trade date`,
+      `${field}.tradeSessionOpenAt must fall on the planned trade date`,
+    );
+  }
+  if (Date.parse(plannedAt) >= Date.parse(tradeSessionOpenAt)) {
+    throw new RangeError(
+      `${field}.plannedAt must precede the planned trade session open`,
     );
   }
 }
@@ -473,12 +500,14 @@ function validatePlanningWindow(
 function validateFrozenOrderReference(
   order: FrozenSellOrder | FrozenBuyOrder,
   field: string,
+  tradeSessionOpenAt?: string,
 ): FrozenMarketPriceEvidence {
   validatePlanningWindow(
     order.referencePriceEvidence.sessionDate,
     order.plannedAt,
     order.plannedTradeDate,
     field,
+    tradeSessionOpenAt,
   );
   const evidence = validatePriceEvidence(
     order.referencePriceEvidence,
@@ -588,6 +617,13 @@ export function createS1SellOrderPlan(input: {
   /** Actual plan-freeze time, after the target submission was accepted. */
   readonly plannedAt: string;
   readonly s1TradeDate: string;
+  /**
+   * Official open instant of `s1TradeDate`. Supplying it fences the plan on the
+   * S1 market session instead of the UTC calendar date, which is what lets a
+   * decision accepted inside its published window - up to fifteen minutes
+   * before the open, so already past UTC midnight - be planned at all.
+   */
+  readonly s1SessionOpenAt?: string;
   readonly decisionCloseTaxReservedNav: DecimalInput;
   readonly positions: readonly MarkedPosition[];
   readonly targets: readonly PortfolioTargetWeight[];
@@ -622,6 +658,7 @@ export function createS1SellOrderPlan(input: {
     input.plannedAt,
     input.s1TradeDate,
     "S1 plan",
+    input.s1SessionOpenAt,
   );
   requireIsoTimestamp(input.decisionCutoffAt, "S1 plan.decisionCutoffAt");
   if (Date.parse(input.decisionCutoffAt) > Date.parse(input.plannedAt)) {
@@ -705,6 +742,12 @@ export function createS2BuyOrderPlan(input: {
   readonly s1SessionDate: string;
   readonly plannedAt: string;
   readonly s2TradeDate: string;
+  /**
+   * Official open instant of `s2TradeDate`. Supplying it fences the plan on the
+   * S2 market session, so S1 close and disposition-FX evidence that was sealed
+   * during S1 stays usable when it is only consumed after UTC midnight.
+   */
+  readonly s2SessionOpenAt?: string;
   readonly preOrderTaxReservedNav: DecimalInput;
   readonly buyingPowerEvidence: BuyingPowerEvidence;
   readonly positions: readonly MarkedPosition[];
@@ -735,6 +778,7 @@ export function createS2BuyOrderPlan(input: {
     input.plannedAt,
     input.s2TradeDate,
     "S2 plan",
+    input.s2SessionOpenAt,
   );
   // Resolve even for an all-cash or zero-gap plan so a ruleset gap cannot be
   // hidden merely because this particular plan produces no orders.
@@ -887,6 +931,12 @@ export function applySimulatedSlippage(input: {
 export function executeS1SellOrders(input: {
   readonly plan: SellOrderPlan;
   readonly tradeDate: string;
+  /**
+   * Official open instant of `tradeDate`. Must be supplied whenever the plan was
+   * frozen against the market session rather than the UTC date, otherwise this
+   * replay would refuse a plan that was legally admitted.
+   */
+  readonly tradeSessionOpenAt?: string;
   readonly executedAt: string;
   readonly officialOpenPrices: Readonly<Record<string, MarketPriceEvidence | undefined>>;
   readonly availableLots: readonly ShadowTaxLot[];
@@ -975,7 +1025,11 @@ export function executeS1SellOrders(input: {
         `Order ${order.orderId} was planned for ${order.plannedTradeDate}, not ${input.tradeDate}`,
       );
     }
-    validateFrozenOrderReference(order, `orders.${order.orderId}`);
+    validateFrozenOrderReference(
+      order,
+      `orders.${order.orderId}`,
+      input.tradeSessionOpenAt,
+    );
     if (Date.parse(order.plannedAt) > Date.parse(input.executedAt)) {
       throw new RangeError(`Order ${order.orderId} cannot execute before it was planned`);
     }
@@ -1104,6 +1158,12 @@ export function executeS1SellOrders(input: {
 export function executeS2BuyOrders(input: {
   readonly plan: BuyOrderPlan;
   readonly tradeDate: string;
+  /**
+   * Official open instant of `tradeDate`. Must be supplied whenever the plan was
+   * frozen against the market session rather than the UTC date, otherwise this
+   * replay would refuse a plan that was legally admitted.
+   */
+  readonly tradeSessionOpenAt?: string;
   readonly executedAt: string;
   readonly officialOpenPrices: Readonly<Record<string, MarketPriceEvidence | undefined>>;
   /** Current remaining lots; used to allocate the next FIFO sequence safely. */
@@ -1187,7 +1247,11 @@ export function executeS2BuyOrders(input: {
         `Order ${order.orderId} was planned for ${order.plannedTradeDate}, not ${input.tradeDate}`,
       );
     }
-    validateFrozenOrderReference(order, `orders.${order.orderId}`);
+    validateFrozenOrderReference(
+      order,
+      `orders.${order.orderId}`,
+      input.tradeSessionOpenAt,
+    );
     if (Date.parse(order.plannedAt) > Date.parse(input.executedAt)) {
       throw new RangeError(`Order ${order.orderId} cannot execute before it was planned`);
     }

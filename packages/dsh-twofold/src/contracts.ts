@@ -81,6 +81,28 @@ export interface TwofoldDecisionGateway {
   submitPortfolioTargets(input: PortfolioTargetsSubmission & {
     signal: AbortSignal
   }): Promise<PortfolioTargetsResult>
+
+  /**
+   * Optionally record a submission the tool refused before this gateway was
+   * reached, so the decision can name the cause instead of reporting that no
+   * submission was ever attempted.
+   *
+   * The submit tool validates its arguments first, and the Harness tool layer
+   * validates them against the parameter schema even earlier. Neither refusal
+   * calls `submitPortfolioTargets`, so without this hook the only trace is an
+   * `isError` tool result in the Session event stream. Implementations must
+   * treat the report as advisory: it never accepts a target and must never
+   * decide admission.
+   */
+  reportSubmissionFailure?(input: {
+    sessionId: string
+    /** Closed failure code, currently always `SUBMISSION_ARGUMENTS_INVALID`. */
+    code: string
+    /** Argument path the Agent must correct, such as `targets[1].symbol`. */
+    field: string
+    reason: string
+    signal: AbortSignal
+  }): Promise<void>
 }
 
 declare module '@deepseek-ai/cordis' {

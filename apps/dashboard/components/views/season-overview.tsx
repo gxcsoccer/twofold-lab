@@ -25,6 +25,10 @@ import type {
 import { PRIVATE_ARENA_PHASES } from "@/lib/data/private-arena-overview";
 import { describeDeadlineBreach } from "@/lib/data/breach-alert";
 import {
+  describeEntrantValuationDisplay,
+  describeSeasonValuationPanelNote,
+} from "@/lib/data/valuation-display";
+import {
   derivePhaseState,
   isDeadlineBreach,
   nextRoundBoundary,
@@ -136,13 +140,6 @@ function noTradeReasonLabel(entrant: PrivateArenaEntrantOverview): string | null
   return null;
 }
 
-function valuationStageLabel(
-  stage: NonNullable<PrivateArenaEntrantOverview["valuation"]>["stage"],
-): string {
-  if (stage === "OPENING") return "起始估值";
-  if (stage === "S1_CLOSE") return "S1 收盘";
-  return "S2 最终";
-}
 
 /** Every entrant whose round ended at a frozen deadline. */
 function breaches(entrants: readonly PrivateArenaEntrantOverview[]): {
@@ -188,6 +185,7 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
     if (best === null) return entrant.rank;
     return Number(entrant.rank) < Number(best) ? entrant.rank : best;
   }, null);
+  const valuationPanelNote = describeSeasonValuationPanelNote(arena);
 
   return (
     <div className="page-stack">
@@ -312,6 +310,12 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
               同一起点 · 同一市场证据 · 同一成交规则
               <br />
               并列使用相同名次
+              {valuationPanelNote ? (
+                <>
+                  <br />
+                  <strong>{valuationPanelNote}</strong>
+                </>
+              ) : null}
             </p>
           }
         />
@@ -335,6 +339,12 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
                 const progress = entrantProgress(entrant);
                 const percent = returnPct(entrant);
                 const isLead = entrant.rank !== null && entrant.rank === leadRank;
+                const valuationNote = describeEntrantValuationDisplay({
+                  valuation: entrant.valuation,
+                  noTrade: entrant.noTrade,
+                  currentRoundIndex: round?.roundIndex ?? null,
+                  currentRoundStage: round?.stage ?? null,
+                });
                 return (
                   <tr key={entrant.entrantId}>
                     <td className={isLead ? "rank-cell rank-cell-lead" : "rank-cell"}>
@@ -370,10 +380,24 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
                     <td>
                       {entrant.valuation
                         ? (
-                            <StatusBadge
-                              label={valuationStageLabel(entrant.valuation.stage)}
-                              tone={entrant.valuation.stage === "S2_CLOSE" ? "positive" : "neutral"}
-                            />
+                            <div className="run-name">
+                              <StatusBadge
+                                label={valuationNote.stageLabel}
+                                tone={
+                                  valuationNote.isHistorical
+                                    ? "warning"
+                                    : entrant.valuation.stage === "S2_CLOSE"
+                                      ? "positive"
+                                      : "neutral"
+                                }
+                              />
+                              <span>
+                                {formatDateTime(entrant.valuation.valuationAt)}
+                                {valuationNote.explanation
+                                  ? ` · ${valuationNote.explanation}`
+                                  : ""}
+                              </span>
+                            </div>
                           )
                         : <StatusBadge label="等待估值" tone="warning" />}
                     </td>
@@ -403,7 +427,10 @@ export function SeasonOverview({ initialData }: { initialData: SeasonOverviewDat
           </table>
         </div>
         <div className="panel-footer">
-          <span>排名依据：Liquidation NAV · 收益为费用与影子税之后</span>
+          <span>
+            排名依据：Liquidation NAV · 收益为费用与影子税之后
+            {valuationPanelNote ? ` · ${valuationPanelNote}` : ""}
+          </span>
           <span>数据截至 <strong>{formatDateTime(arena.asOf)}</strong></span>
         </div>
       </section>

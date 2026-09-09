@@ -9,12 +9,13 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { TwofoldDecisionGateway } from './contracts.js'
+import type { PortfolioTargetsSubmission, TwofoldDecisionGateway } from './contracts.js'
 import {
   ALLOWED_TOOL_NAMES,
   LOCKED_MODEL,
   LOCKED_PROVIDER,
   ORCHESTRATOR_ALLOWED_TOOL_NAMES,
+  PortfolioSubmissionArgumentError,
   denyUnapprovedTool,
   lockModelRequest,
   normalizePortfolioTargets,
@@ -28,12 +29,14 @@ export {
   LOCKED_MODEL,
   LOCKED_PROVIDER,
   ORCHESTRATOR_ALLOWED_TOOL_NAMES,
+  PortfolioSubmissionArgumentError,
   denyUnapprovedTool,
   lockModelRequest,
   normalizePortfolioTargets,
   validateDecisionPacketResult,
   validatePortfolioTargetsResult,
 } from './policy.js'
+export type { SubmitPortfolioTargetsArgs } from './policy.js'
 
 /** Stable Cordis plugin name. */
 export const name = 'twofold-agent'
@@ -96,6 +99,37 @@ function gateway(ctx: Context): TwofoldDecisionGateway | undefined {
 function owningSessionId(exec: { agent?: { id: unknown } }): string {
   if (exec.agent === undefined) throw new Error('Twofold tools require an owning agent Session')
   return String(exec.agent.id)
+}
+
+/**
+ * Tell the bridge about a submission this tool refused on its own, then let the
+ * refusal propagate unchanged.
+ *
+ * The report is advisory and best effort: the thrown refusal is the durable
+ * outcome, so a bridge that cannot record it must not replace the reason the
+ * Agent has to read in order to correct the submission. Refusals raised by the
+ * Harness parameter-schema check happen before this body runs at all and stay
+ * observable only as an `isError` tool result.
+ */
+async function reportRefusedSubmission(
+  current: TwofoldDecisionGateway | undefined,
+  sessionId: string,
+  error: unknown,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!(error instanceof PortfolioSubmissionArgumentError)) return
+  if (current?.reportSubmissionFailure === undefined) return
+  try {
+    await current.reportSubmissionFailure({
+      sessionId,
+      code: error.code,
+      field: error.field,
+      reason: error.message,
+      signal,
+    })
+  } catch {
+    // Intentionally swallowed; the refusal below is the authoritative result.
+  }
 }
 
 /** Render the complete immutable packet into the model transcript. */
@@ -290,8 +324,15 @@ export function applyAgentPolicy(ctx: Context, mode: TwofoldAgentMode): void {
       }],
     },
     async execute(args, exec) {
-      const submission = normalizePortfolioTargets(args, owningSessionId(exec))
+      const sessionId = owningSessionId(exec)
       const current = gateway(ctx)
+      let submission: PortfolioTargetsSubmission
+      try {
+        submission = normalizePortfolioTargets(args, sessionId)
+      } catch (error) {
+        await reportRefusedSubmission(current, sessionId, error, exec.signal)
+        throw error
+      }
       if (current === undefined) return disabledSubmission
       exec.signal.throwIfAborted()
       const result = validatePortfolioTargetsResult(await current.submitPortfolioTargets({

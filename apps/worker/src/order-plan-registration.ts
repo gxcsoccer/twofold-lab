@@ -30,6 +30,11 @@ export interface RegisterFrozenOrderPlanRpcArguments {
   readonly p_stage: "S1" | "S2";
   readonly p_planned_at: string;
   readonly p_planned_trade_date: string;
+  /**
+   * Official open instant of `p_planned_trade_date`. `null` keeps the older
+   * UTC-midnight fence, which is what the DB function defaults to on its own.
+   */
+  readonly p_trade_session_open_at: string | null;
   readonly p_manifest_schema: typeof FROZEN_ORDER_PLAN_MANIFEST_SCHEMA;
   readonly p_plan_canonical_json: string;
   readonly p_plan_sha256: string;
@@ -51,6 +56,12 @@ export function buildFrozenOrderPlanRegistration(input: {
   readonly acceptedSubmissionId: string;
   readonly plannedAt: string;
   readonly plannedTradeDate: string;
+  /**
+   * Official open instant of `plannedTradeDate`, matching the instant the Core
+   * plan was frozen against. Omitting it keeps the UTC-date fence, which is
+   * narrower, so this can only ever admit a plan the engine already admitted.
+   */
+  readonly tradeSessionOpenAt?: string;
   readonly recordedBy: string;
   readonly plan: FrozenOrderPlan;
 }): FrozenOrderPlanRegistration {
@@ -61,8 +72,18 @@ export function buildFrozenOrderPlanRegistration(input: {
   requireUuid(input.acceptedSubmissionId, "acceptedSubmissionId");
   requireCanonicalTimestamp(input.plannedAt, "plannedAt");
   requireCalendarDate(input.plannedTradeDate, "plannedTradeDate");
-  if (input.plannedAt.slice(0, 10) >= input.plannedTradeDate) {
-    throw new RangeError("plannedAt must precede plannedTradeDate");
+  if (input.tradeSessionOpenAt === undefined) {
+    if (input.plannedAt.slice(0, 10) >= input.plannedTradeDate) {
+      throw new RangeError("plannedAt must precede plannedTradeDate");
+    }
+  } else {
+    requireCanonicalTimestamp(input.tradeSessionOpenAt, "tradeSessionOpenAt");
+    if (input.tradeSessionOpenAt.slice(0, 10) !== input.plannedTradeDate) {
+      throw new RangeError("tradeSessionOpenAt must fall on plannedTradeDate");
+    }
+    if (Date.parse(input.plannedAt) >= Date.parse(input.tradeSessionOpenAt)) {
+      throw new RangeError("plannedAt must precede the trade session open");
+    }
   }
 
   const plan = input.plan;
@@ -175,6 +196,7 @@ export function buildFrozenOrderPlanRegistration(input: {
     p_stage: plan.stage,
     p_planned_at: input.plannedAt,
     p_planned_trade_date: input.plannedTradeDate,
+    p_trade_session_open_at: input.tradeSessionOpenAt ?? null,
     p_manifest_schema: FROZEN_ORDER_PLAN_MANIFEST_SCHEMA,
     p_plan_canonical_json: planCanonicalJson,
     p_plan_sha256: planSha256,

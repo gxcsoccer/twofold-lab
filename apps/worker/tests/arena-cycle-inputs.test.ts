@@ -554,3 +554,108 @@ describe("Arena cycle Core inputs", () => {
     });
   });
 });
+
+/**
+ * The published decision window closes fifteen minutes before the S1 open, and
+ * 09:30 ET is 13:30 UTC, so a legal acceptance routinely lands after the UTC
+ * date has already rolled over into the S1 session date. Fencing planning on the
+ * UTC date instead of the market session makes PREPARE_S1_ORDERS impossible for
+ * those Rounds - Round 1 of private-us-liquid-100-s4 died this way.
+ */
+describe("Arena planning windows across the UTC date boundary", () => {
+  const S1_OPEN_AT = "2026-08-31T13:30:00.000Z";
+  const S2_OPEN_AT = "2026-09-01T13:30:00.000Z";
+
+  function acceptedAt(instant: string): ArenaCycleMaterial {
+    const value = structuredClone(material()) as unknown as Record<string, any>;
+    value.acceptedSubmission.acceptedAt = instant;
+    return value as unknown as ArenaCycleMaterial;
+  }
+
+  it("carries the S1 session open instant into the Core timeline", () => {
+    expect(buildArenaS1PlanInput(material()).timeline).toMatchObject({
+      s1TradeDate: "2026-08-31",
+      s1SessionOpenAt: S1_OPEN_AT,
+    });
+  });
+
+  it("plans S1 for a decision accepted inside its window but after midnight", () => {
+    // 13:14Z is one minute inside decisionWindowClosesAt, and one minute inside
+    // is the whole legal window: nothing here is backfilled or relaxed.
+    const late = acceptedAt("2026-08-31T13:14:00.000Z");
+    expect(late.round.decisionWindowClosesAt).toBe("2026-08-31T13:15:00.000Z");
+
+    const prepared = prepareAcceptedTargetCycleS1(buildArenaS1PlanInput(late));
+    expect(prepared.plan.orders).toHaveLength(1);
+    expect(prepared.plan.orders[0]).toMatchObject({
+      side: "SELL",
+      symbol: "LULU",
+      quantity: "75",
+      plannedAt: "2026-08-31T13:14:00.000Z",
+      plannedTradeDate: "2026-08-31",
+    });
+  });
+
+  it("still refuses a decision accepted at or after the S1 open", () => {
+    for (const instant of [S1_OPEN_AT, "2026-08-31T15:00:00.000Z"]) {
+      expect(() => prepareAcceptedTargetCycleS1(
+        buildArenaS1PlanInput(acceptedAt(instant)),
+      )).toThrow("S1 plan.plannedAt must precede the planned trade session open");
+    }
+  });
+
+  it("keeps sealed S1 evidence legal however late the queue consumes it", () => {
+    // Only the sealed instants decide legality. A capture item that completes
+    // long after midnight, or a sibling entrant processed the next morning,
+    // must settle from the same rows.
+    const lateBinding = structuredClone(settleMaterial()) as unknown as Record<string, any>;
+    lateBinding.evidence.s1Close.boundAt = "2026-09-01T11:00:00.000Z";
+    lateBinding.evidence.s1DispositionFx.boundAt = "2026-09-01T11:00:01.000Z";
+    lateBinding.evidence.s1Open.boundAt = "2026-09-01T11:00:02.000Z";
+
+    const input = buildArenaThroughS1Input(
+      lateBinding as unknown as ArenaCycleMaterial,
+    );
+    expect(input.timeline).toMatchObject({
+      s1SettledAt: "2026-08-31T20:20:05.000Z",
+      s2PlannedAt: "2026-08-31T20:20:05.000Z",
+      s2TradeDate: "2026-09-01",
+    });
+    expect(input.timeline).not.toMatchObject({ s2SessionOpenAt: S2_OPEN_AT });
+
+    const checkpoint = settleAcceptedTargetCycleS1AndPrepareS2(input);
+    expect(checkpoint.s2Plan.orders).toHaveLength(1);
+  });
+
+  it("names the cause when S1 evidence was itself sealed too late", () => {
+    // The database refuses to create these rows at all (migration
+    // 202609010001), so this mirrors that fence rather than widening it: the
+    // failure must say what is wrong instead of surfacing as an opaque
+    // planning-window error from the Core engine.
+    for (const mutate of [
+      (value: Record<string, any>) => {
+        value.evidence.s1Close.sealedAt = "2026-09-01T02:00:00.000Z";
+      },
+      (value: Record<string, any>) => {
+        value.evidence.s1DispositionFx.visibleAt = "2026-09-01T02:00:00.000Z";
+      },
+    ]) {
+      const value = structuredClone(settleMaterial()) as unknown as Record<string, any>;
+      mutate(value);
+      expect(() => buildArenaThroughS1Input(
+        value as unknown as ArenaCycleMaterial,
+      )).toThrow(
+        "S1 evidence sealed on or after the S2 session date cannot carry an S2 plan",
+      );
+    }
+  });
+
+  it("still refuses S1 evidence that was not complete before the S2 open", () => {
+    const value = structuredClone(settleMaterial()) as unknown as Record<string, any>;
+    value.round.s2SessionDate = "2026-09-02";
+    value.round.s2OpenAt = "2026-08-31T20:00:00.000Z";
+    expect(() => buildArenaThroughS1Input(
+      value as unknown as ArenaCycleMaterial,
+    )).toThrow("S1 evidence was not complete before S2 open");
+  });
+});

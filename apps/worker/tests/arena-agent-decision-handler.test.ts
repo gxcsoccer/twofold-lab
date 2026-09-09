@@ -10,6 +10,7 @@ import {
   resolveArenaAgentFilesystem,
   type ArenaAgentDecisionExecution,
 } from "../src/arena-agent-decision-handler.js";
+import { ArenaTerminalWorkError } from "../src/arena-work-runner.js";
 import type { ArenaWorkItem } from "../src/arena-work-repository.js";
 
 const item = {
@@ -71,6 +72,49 @@ describe("Arena Agent decision phase handler", () => {
     await expect(handler(item, new AbortController().signal)).rejects.toThrow(
       "without one accepted target",
     );
+  });
+
+  it("carries the runtime failure code into the queue instead of only the status", async () => {
+    const handler = createArenaAgentDecisionHandler({
+      execute: async () => ({
+        ...accepted,
+        status: "FAILED",
+        acceptedSubmissionId: null,
+        failureCode: "SUBMISSION_TOOL_ERRORED",
+        failureMessage: "submit_portfolio_targets failed on 1 of 1 call(s)",
+      }),
+    });
+    const error: unknown = await handler(item, new AbortController().signal)
+      .then(() => null, (reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ArenaTerminalWorkError);
+    const terminal = error as ArenaTerminalWorkError;
+    expect(terminal.code).toBe("SUBMISSION_TOOL_ERRORED");
+    expect(terminal.message).toContain("SUBMISSION_TOOL_ERRORED");
+    expect(terminal.message).toContain("1 of 1");
+    expect(terminal.message).toContain("without one accepted target");
+  });
+
+  it("still reports the status as the code when the runtime supplies none", async () => {
+    const handler = createArenaAgentDecisionHandler({
+      execute: async () => ({
+        ...accepted,
+        status: "NO_ACCEPTED_SUBMISSION",
+        acceptedSubmissionId: null,
+      }),
+    });
+    const error: unknown = await handler(item, new AbortController().signal)
+      .then(() => null, (reason: unknown) => reason);
+    expect((error as ArenaTerminalWorkError).code).toBe("NO_ACCEPTED_SUBMISSION");
+  });
+
+  it("never lets a runtime claim success without an accepted submission id", async () => {
+    const handler = createArenaAgentDecisionHandler({
+      execute: async () => ({ ...accepted, acceptedSubmissionId: null }),
+    });
+    const error: unknown = await handler(item, new AbortController().signal)
+      .then(() => null, (reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ArenaTerminalWorkError);
+    expect((error as ArenaTerminalWorkError).code).toBe("ACCEPTED_SUBMISSION_MISSING");
   });
 
   it("advertises Agent capability only when the private key is present", () => {

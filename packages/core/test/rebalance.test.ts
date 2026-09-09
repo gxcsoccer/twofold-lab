@@ -755,3 +755,218 @@ describe("two-stage deterministic rebalance", () => {
     })).toThrow("executedAt must fall on tradeDate");
   });
 });
+
+/**
+ * A frozen plan is written from evidence that was sealed during the previous
+ * session, and the UTC calendar date rolls over 8.5 hours before the exchange
+ * opens. Comparing the planning instant against the UTC date therefore refuses
+ * a plan that is written entirely before the market it trades in - which is how
+ * Round 1 of private-us-liquid-100-s4 ended with no fills, and what any Round
+ * whose decision is accepted after UTC midnight would hit next. The window is
+ * the exchange session, so the fence has to be the session open instant.
+ */
+describe("market-session planning fence", () => {
+  const D_SESSION = "2026-08-31";
+  const D_CUTOFF_AT = "2026-08-31T20:15:00.000Z";
+  const S1_SESSION = "2026-09-01";
+  const S1_SESSION_OPEN_AT = "2026-09-01T13:30:00.000Z";
+  const S2_SESSION = "2026-09-02";
+  const S2_SESSION_OPEN_AT = "2026-09-02T13:30:00.000Z";
+  /** One minute inside the decision window, which closes at the open minus 15. */
+  const ACCEPTED_AFTER_UTC_MIDNIGHT = "2026-09-01T13:14:00.000Z";
+  /** S1 close sealed at 20:15Z, disposition FX first visible the next UTC day. */
+  const S1_SETTLED_AFTER_UTC_MIDNIGHT = "2026-09-02T01:15:00.000Z";
+
+  const allCashS1 = {
+    decisionId,
+    decisionSessionDate: D_SESSION,
+    decisionCutoffAt: D_CUTOFF_AT,
+    s1TradeDate: S1_SESSION,
+    slippageBps: "0",
+    fillPriceScale: 8,
+    taxAllocationScale: 12,
+    decisionCloseTaxReservedNav: "100",
+    positions: [],
+    targets: [],
+    cashWeightBps: "10000",
+  } as const;
+
+  const allCashS2 = {
+    decisionId,
+    s1SessionDate: S1_SESSION,
+    s2TradeDate: S2_SESSION,
+    slippageBps: "0",
+    fillPriceScale: 8,
+    preOrderTaxReservedNav: "100",
+    buyingPowerEvidence: {
+      value: "100",
+      snapshotId: "s1-close-ledger",
+      visibleAt: "2026-09-01T20:15:00.000Z",
+    },
+    positions: [],
+    targets: [],
+    cashWeightBps: "10000",
+  } as const;
+
+  it("admits a decision accepted after UTC midnight but before the S1 open", () => {
+    expect(() => createS1SellOrderPlan({
+      ...allCashS1,
+      plannedAt: ACCEPTED_AFTER_UTC_MIDNIGHT,
+    })).toThrow("plannedAt must precede the planned trade date");
+
+    expect(createS1SellOrderPlan({
+      ...allCashS1,
+      plannedAt: ACCEPTED_AFTER_UTC_MIDNIGHT,
+      s1SessionOpenAt: S1_SESSION_OPEN_AT,
+    }).orders).toEqual([]);
+  });
+
+  it("admits an S2 plan derived from S1 evidence sealed before the S2 open", () => {
+    // Round 1's exact failure: SETTLE_S1_AND_PREPARE_S2 raised
+    // "S2 plan.plannedAt must precede the planned trade date" for evidence that
+    // was sealed in time and merely consumed after the UTC date rolled over.
+    expect(() => createS2BuyOrderPlan({
+      ...allCashS2,
+      plannedAt: S1_SETTLED_AFTER_UTC_MIDNIGHT,
+    })).toThrow("S2 plan.plannedAt must precede the planned trade date");
+
+    expect(createS2BuyOrderPlan({
+      ...allCashS2,
+      plannedAt: S1_SETTLED_AFTER_UTC_MIDNIGHT,
+      s2SessionOpenAt: S2_SESSION_OPEN_AT,
+    }).orders).toEqual([]);
+  });
+
+  it("still refuses a plan written at or after the session it would trade in", () => {
+    for (const plannedAt of [S1_SESSION_OPEN_AT, "2026-09-01T14:00:00.000Z"]) {
+      expect(() => createS1SellOrderPlan({
+        ...allCashS1,
+        plannedAt,
+        s1SessionOpenAt: S1_SESSION_OPEN_AT,
+      })).toThrow("S1 plan.plannedAt must precede the planned trade session open");
+    }
+    for (const plannedAt of [S2_SESSION_OPEN_AT, "2026-09-02T18:00:00.000Z"]) {
+      expect(() => createS2BuyOrderPlan({
+        ...allCashS2,
+        plannedAt,
+        s2SessionOpenAt: S2_SESSION_OPEN_AT,
+      })).toThrow("S2 plan.plannedAt must precede the planned trade session open");
+    }
+  });
+
+  it("refuses a session open instant that does not belong to the trade date", () => {
+    // Otherwise the fence could be widened arbitrarily by naming a later open.
+    expect(() => createS1SellOrderPlan({
+      ...allCashS1,
+      plannedAt: ACCEPTED_AFTER_UTC_MIDNIGHT,
+      s1SessionOpenAt: S2_SESSION_OPEN_AT,
+    })).toThrow("S1 plan.tradeSessionOpenAt must fall on the planned trade date");
+    expect(() => createS2BuyOrderPlan({
+      ...allCashS2,
+      plannedAt: S1_SETTLED_AFTER_UTC_MIDNIGHT,
+      s2SessionOpenAt: "2026-09-03T13:30:00.000Z",
+    })).toThrow("S2 plan.tradeSessionOpenAt must fall on the planned trade date");
+  });
+
+  it("keeps the calendar ordering rule across a weekend and a market holiday", () => {
+    // Friday 2026-09-04 decides; Monday 2026-09-07 is Labor Day, so S1 is
+    // Tuesday 2026-09-08 and the planning instant crosses three UTC dates.
+    const holidayCarry = {
+      ...allCashS1,
+      decisionSessionDate: "2026-09-04",
+      decisionCutoffAt: "2026-09-04T20:15:00.000Z",
+      s1TradeDate: "2026-09-08",
+      s1SessionOpenAt: "2026-09-08T13:30:00.000Z",
+    } as const;
+
+    for (const plannedAt of [
+      "2026-09-04T20:16:00.000Z",
+      "2026-09-06T22:00:00.000Z",
+      "2026-09-08T13:14:00.000Z",
+    ]) {
+      expect(createS1SellOrderPlan({ ...holidayCarry, plannedAt }).orders).toEqual([]);
+    }
+    expect(() => createS1SellOrderPlan({
+      ...holidayCarry,
+      plannedAt: "2026-09-08T13:30:00.000Z",
+    })).toThrow("plannedAt must precede the planned trade session open");
+    expect(() => createS1SellOrderPlan({
+      ...holidayCarry,
+      s1TradeDate: "2026-09-04",
+      s1SessionOpenAt: "2026-09-04T13:30:00.000Z",
+      plannedAt: "2026-09-04T13:00:00.000Z",
+    })).toThrow("plannedTradeDate must follow the reference session date");
+  });
+
+  it("leaves the frozen plan identical whether or not the open instant is named", () => {
+    // The fence is an admission rule, not plan content: nothing enters the
+    // fingerprint, so no frozen order shape or manifest key count changes.
+    const position = {
+      instrumentId: "lulu",
+      symbol: "LULU",
+      quantity: "10",
+      mark: closeMark("100", "lulu", D_SESSION, D_CUTOFF_AT),
+    } as const;
+    const shared = {
+      ...allCashS1,
+      plannedAt: "2026-08-31T20:16:00.000Z",
+      decisionCloseTaxReservedNav: "1000",
+      positions: [position],
+      targets: [{ instrumentId: "lulu", symbol: "LULU", weightBps: "5000" }],
+      cashWeightBps: "5000",
+    } as const;
+
+    const withoutOpen = createS1SellOrderPlan(shared);
+    const withOpen = createS1SellOrderPlan({
+      ...shared,
+      s1SessionOpenAt: S1_SESSION_OPEN_AT,
+    });
+    expect(withOpen.orders).toHaveLength(1);
+    expect(withOpen).toEqual(withoutOpen);
+    expect(Object.keys(withOpen.orders[0]!)).toEqual(
+      Object.keys(withoutOpen.orders[0]!),
+    );
+  });
+
+  it("executes a plan that was legally written after the UTC date rolled over", () => {
+    const plan = createS1SellOrderPlan({
+      ...allCashS1,
+      plannedAt: ACCEPTED_AFTER_UTC_MIDNIGHT,
+      s1SessionOpenAt: S1_SESSION_OPEN_AT,
+      decisionCloseTaxReservedNav: "0",
+      positions: [{
+        instrumentId: "lulu",
+        symbol: "LULU",
+        quantity: "1",
+        mark: closeMark("100", "lulu", D_SESSION, D_CUTOFF_AT),
+      }],
+    });
+    const execution = {
+      plan,
+      tradeDate: S1_SESSION,
+      executedAt: "2026-09-01T13:31:00.000Z",
+      officialOpenPrices: {
+        lulu: openPrice("100", "lulu", S1_SESSION, S1_SESSION_OPEN_AT),
+      },
+      availableLots: [{
+        lotId: "lulu-lot-1",
+        instrumentId: "lulu",
+        acquisitionSequence: sequence("1"),
+        quantity: nonNegativeDecimal("1"),
+        grossPurchasePrice: nonNegativeDecimal("100"),
+        buyFees: nonNegativeDecimal("0"),
+      }],
+      sourceCountryByInstrument: { lulu: "US" },
+      grossBuyingCashBeforeSells: "0",
+      existingTaxReserve: "0",
+    } as const;
+
+    // Replaying the same frozen plan without the instant must not re-refuse it.
+    expect(() => executeS1SellOrders(execution))
+      .toThrow("plannedAt must precede the planned trade date");
+    expect(executeS1SellOrders({
+      ...execution,
+      tradeSessionOpenAt: S1_SESSION_OPEN_AT,
+    }).fills).toHaveLength(1);
+  });
+});
