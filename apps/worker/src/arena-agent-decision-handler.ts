@@ -7,6 +7,7 @@ import {
   executeBaselineDecision,
   loadBaselineCompetitionSeat,
 } from "./arena-baseline-runner.js";
+import { arenaDecisionTask } from "./arena-decision-task.js";
 import { buildArenaInputs, type ArenaCompetitionIdentity } from "./arena-inputs.js";
 import { SupabaseArenaRepository } from "./arena-repository.js";
 import { createArenaRuntime } from "./arena-runtime.js";
@@ -312,7 +313,7 @@ export function createRealArenaAgentDecisionExecution(input: {
         prepared,
         persistence: repository,
         signal,
-        task: taskForPreset(seat.identity.presetId),
+        task: arenaDecisionTask(seat.identity.executionClass),
       });
       const projection = execution.projection;
       const { failureCode, failureMessage } = projection.decision;
@@ -408,12 +409,4 @@ export async function loadCompetitionSeat(
     });
   }
   throw new TypeError("no competition config matches claimed Agent work");
-}
-
-function taskForPreset(presetId: ArenaCompetitionIdentity["presetId"]): string {
-  const common =
-    "完成这次真实、只读行情快照上的纸面组合决策。先读取绑定的 decision packet，并以其中账本头、现金和持仓为唯一账户状态；在截止时间前提交且只提交一次目标权重。不要虚构订单、成交、费用、税或 NAV。";
-  return presetId === "twofold-orchestrator"
-    ? `${common} 委派恰好一个前台研究子 Agent 做独立风险复核，再由 root 综合证据。`
-    : `${common} 这是 root-only 参赛者，不要委派子 Agent。`;
 }

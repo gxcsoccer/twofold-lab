@@ -61,6 +61,7 @@ import type {
   PreparedArenaInvocation,
 } from "./arena-types.js";
 import { arenaRootMaxTokens } from "./arena-root-output-budget.js";
+import { arenaDecisionTask } from "./arena-decision-task.js";
 import {
   HarnessUsageAttemptBuffer,
   type FrozenHarnessUsage,
@@ -85,9 +86,6 @@ const TRUSTED_PRESETS = new Set(["twofold", "twofold-orchestrator"]);
 const LOCKED_PROVIDER = "deepseek-official";
 const LOCKED_MODEL = "deepseek-v4-pro";
 const RUNTIME_NAME = "twofold-arena-worker";
-const DEFAULT_TASK = `Execute the bound Twofold Arena portfolio decision now.
-
-Read the immutable decision packet first. You may delegate bounded, foreground research to the configured subagent when it materially improves the decision. Synthesize all evidence yourself and submit exactly one final target portfolio through submit_portfolio_targets. Do not use facts outside the packet and do not claim that orders or fills occurred.`;
 
 const SUBMIT_TOOL_NAME = "submit_portfolio_targets";
 
@@ -1465,6 +1463,10 @@ class ActiveArenaRun {
       submissionToolFailures: this.submissionTool.failures,
       lastSubmissionFailure: this.submissionTool.lastFailure,
       correctionsSpent: this.correctionsSpent,
+      orchestratedDescendantMissing: !isArenaDescendantRequirementSatisfied(
+        this.prepared.identity.executionClass,
+        this.projection,
+      ),
     });
   }
 
@@ -1476,11 +1478,13 @@ class ActiveArenaRun {
    */
   async correctSubmissionOnce(handle: AgentHandle): Promise<void> {
     if (this.terminal || this.acceptedSubmission !== undefined) return;
-    const outcome = arenaDecisionFinishOutcome(this.finishObservation());
+    const observation = this.finishObservation();
+    const outcome = arenaDecisionFinishOutcome(observation);
     const correction = arenaSubmissionCorrection({
       outcome,
       remainingMilliseconds: this.deadlineAt - this.now().getTime(),
       budgetExhausted: this.providerLimitReached(),
+      orchestratedDescendantMissing: observation.orchestratedDescendantMissing,
     });
     if (!correction.allowed) return;
     this.correctionsSpent += 1;
@@ -1898,7 +1902,11 @@ export class ArenaRuntime {
             });
           }, boundedDelay);
           handle.agent.followup(createUserMessage({
-            content: [{ type: "text", text: input.task ?? DEFAULT_TASK }],
+            content: [{
+              type: "text",
+              text: input.task
+                ?? arenaDecisionTask(input.prepared.identity.executionClass),
+            }],
             source: { kind: "user" },
           }));
           await handle.agent.whenIdle();

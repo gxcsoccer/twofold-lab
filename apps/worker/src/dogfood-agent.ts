@@ -2,11 +2,9 @@ import { access, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { arenaDecisionTask } from "./arena-decision-task.js";
 import { buildArenaInputs } from "./arena-inputs.js";
-import type {
-  ArenaCompetitionIdentity,
-  ArenaPresetId,
-} from "./arena-inputs.js";
+import type { ArenaCompetitionIdentity } from "./arena-inputs.js";
 import { SupabaseArenaRepository } from "./arena-repository.js";
 import { createArenaRuntime } from "./arena-runtime.js";
 import { loadWorkerConfig } from "./config.js";
@@ -115,14 +113,6 @@ async function loadCompetitionContext(): Promise<DogfoodCompetitionContext> {
   };
 }
 
-function taskForPreset(presetId: ArenaPresetId): string {
-  const common =
-    "完成这次真实、只读行情快照上的纸面组合决策。先读取绑定的 decision packet，并以其中账本头、现金和持仓为唯一账户状态；在截止时间前提交且只提交一次目标权重。不要虚构订单、成交、费用、税或 NAV。";
-  return presetId === "twofold-orchestrator"
-    ? `${common} 委派恰好一个前台研究子 Agent 做独立风险复核，再由 root 综合证据。`
-    : `${common} 这是 root-only 参赛者，不要委派子 Agent。`;
-}
-
 async function main(): Promise<void> {
   requiredSecret("DEEPSEEK_API_KEY");
   const abortScope = createDogfoodAbortScope();
@@ -178,7 +168,7 @@ async function main(): Promise<void> {
       prepared,
       persistence: repository,
       signal: abortScope.signal,
-      task: taskForPreset(competitionIdentity.presetId),
+      task: arenaDecisionTask(competitionIdentity.executionClass),
     });
     const projection = result.projection;
     process.stdout.write(`${JSON.stringify({

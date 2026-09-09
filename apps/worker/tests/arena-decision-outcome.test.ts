@@ -19,6 +19,7 @@ const idle: ArenaDecisionFinishObservation = Object.freeze({
   submissionToolFailures: 0,
   lastSubmissionFailure: null,
   correctionsSpent: 0,
+  orchestratedDescendantMissing: false,
 });
 
 function observe(
@@ -485,6 +486,51 @@ describe("bounded submission correction", () => {
       allowed: false,
       reason: "the frozen submission deadline has no remaining headroom",
     });
+  });
+
+  it("asks an orchestrated root with no child for the subagent call first", () => {
+    // Round 3 of private-us-liquid-100-s4: the orchestrated root hit its frozen
+    // output ceiling before it ever called subagent, so a submit-only
+    // correction would spend the single retry on a submission that admission
+    // refuses with DESCENDANT_REQUIRED.
+    const correction = arenaSubmissionCorrection({
+      outcome: arenaDecisionFinishOutcome(observe({
+        rootTurnEnd: { kind: "max-tokens" },
+        orchestratedDescendantMissing: true,
+      })),
+      remainingMilliseconds: 120_000,
+      budgetExhausted: false,
+      orchestratedDescendantMissing: true,
+    });
+    expect(correction.allowed).toBe(true);
+    if (!correction.allowed) return;
+    expect(correction.instruction).toContain("ROOT_OUTPUT_TRUNCATED");
+    expect(correction.instruction).toContain("DESCENDANT_REQUIRED");
+    expect(correction.instruction).toContain("subagent");
+    expect(correction.instruction.indexOf("subagent"))
+      .toBeLessThan(correction.instruction.indexOf("submit_portfolio_targets"));
+    expect(correction.instruction).toContain("恰好一次");
+    const lines = correction.instruction.split("\n");
+    expect(lines.every((line) => line.trim().length > 0)).toBe(true);
+    expect(lines.at(-1)).toContain("decision_summary");
+  });
+
+  it("keeps the correction submit-only once a descendant is registered", () => {
+    for (const orchestratedDescendantMissing of [false, undefined]) {
+      const correction = arenaSubmissionCorrection({
+        outcome: truncated,
+        remainingMilliseconds: 120_000,
+        budgetExhausted: false,
+        ...(orchestratedDescendantMissing === undefined
+          ? {}
+          : { orchestratedDescendantMissing }),
+      });
+      expect(correction.allowed).toBe(true);
+      if (!correction.allowed) continue;
+      expect(correction.instruction).toContain("直接调用 submit_portfolio_targets");
+      expect(correction.instruction).not.toContain("subagent");
+      expect(correction.instruction).not.toContain("DESCENDANT_REQUIRED");
+    }
   });
 
   it("refuses to correct an already-successful or hard-failed decision", () => {
