@@ -1158,6 +1158,12 @@ export function executeS1SellOrders(input: {
 export function executeS2BuyOrders(input: {
   readonly plan: BuyOrderPlan;
   readonly tradeDate: string;
+  /**
+   * Official open instant of `tradeDate`. Must be supplied whenever the plan was
+   * frozen against the market session rather than the UTC date, otherwise this
+   * replay would refuse a plan that was legally admitted.
+   */
+  readonly tradeSessionOpenAt?: string;
   readonly executedAt: string;
   readonly officialOpenPrices: Readonly<Record<string, MarketPriceEvidence | undefined>>;
   /** Current remaining lots; used to allocate the next FIFO sequence safely. */
