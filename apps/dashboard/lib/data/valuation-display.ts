@@ -7,9 +7,12 @@ import type {
 } from "./contracts";
 
 
-/** Round stages that still expect a fresher S2_CLOSE valuation for this round. */
+/**
+ * Round stages that still expect a fresher S2_CLOSE valuation for this round.
+ * S2_EXECUTION is deliberately excluded: S2_CLOSE is only published at finalize,
+ * so a sealed S1_CLOSE mark is still the latest liquidation NAV while S2 trades.
+ */
 const ROUND_EXPECTS_S2_CLOSE = new Set<PrivateArenaRoundStage>([
-  "S2_EXECUTION",
   "FINALIZING",
   "COMPLETE",
 ]);
@@ -38,7 +41,7 @@ function valuationStageLabel(stage: PrivateArenaScore["stage"]): string {
 }
 
 function noTradeHistoricalExplanation(
-  noTrade: Pick<PrivateArenaNoTradeOverview, "status" | "reasonCode">,
+  noTrade: Pick<PrivateArenaNoTradeOverview, "status" | "reasonCode" | "outcome">,
 ): string {
   const prefix = "本轮未成交、展示的是历史估值";
   if (noTrade.status === "SUCCEEDED") {
@@ -71,7 +74,7 @@ export function describeEntrantValuationDisplay(input: {
   readonly valuation: PrivateArenaScore | null;
   readonly noTrade: Pick<
     PrivateArenaNoTradeOverview,
-    "status" | "reasonCode"
+    "status" | "reasonCode" | "outcome"
   > | null;
   readonly currentRoundIndex: string | null;
   readonly currentRoundStage: PrivateArenaRoundStage | null;
@@ -90,7 +93,13 @@ export function describeEntrantValuationDisplay(input: {
   const sameRound =
     currentRoundIndex !== null && valuation.roundIndex === currentRoundIndex;
 
-  if (noTrade !== null) {
+  // A recovery that resolved to EXISTING_S2_VALUATION did not carry a stale mark
+  // forward: the round entry already had its own S2_CLOSE valuation, so fall
+  // through to the ordinary same-round / stage freshness checks below.
+  const carriedForward =
+    noTrade !== null && noTrade.outcome !== "EXISTING_S2_VALUATION";
+
+  if (carriedForward) {
     return {
       freshness: "NO_TRADE_HISTORICAL",
       stageLabel: sameRound ? `${stageLabel} · 历史` : `R${valuation.roundIndex} · 历史`,

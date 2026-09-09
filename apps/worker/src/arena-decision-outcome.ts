@@ -414,5 +414,5 @@ function correctionInstruction(outcome: ArenaDecisionOutcome): string {
     "沿用同一个 decision packet 的 decision_packet_id 与 packet_sha256，",
     "所有 target_weight_bps 与 cash_weight_bps 之和必须正好是 10000，",
     "并给出非空的 decision_summary。不要虚构订单、成交、费用、税或 NAV。",
-  ].join("");
+  ].join("\n");
 }

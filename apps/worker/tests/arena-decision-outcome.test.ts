@@ -444,6 +444,22 @@ describe("bounded submission correction", () => {
     });
   });
 
+  it("separates the correction sentences with newlines", () => {
+    const correction = arenaSubmissionCorrection({
+      outcome: truncated,
+      remainingMilliseconds: 120_000,
+      budgetExhausted: false,
+    });
+    expect(correction.allowed).toBe(true);
+    if (!correction.allowed) return;
+    const lines = correction.instruction.split("\n");
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.every((line) => line.trim().length > 0)).toBe(true);
+    expect(lines[0]).toContain("ROOT_OUTPUT_TRUNCATED");
+    expect(lines.some((line) => line.includes("submit_portfolio_targets"))).toBe(true);
+    expect(lines.at(-1)).toContain("decision_summary");
+  });
+
   it("refuses to correct without frozen budget or deadline headroom", () => {
     expect(arenaSubmissionCorrection({
       outcome: truncated,
