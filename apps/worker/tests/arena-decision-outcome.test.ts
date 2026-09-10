@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ARENA_DESCENDANT_CORRECTION_DESCENDANTS,
+  ARENA_DESCENDANT_CORRECTION_PROVIDER_REQUESTS,
   ARENA_MAX_SUBMISSION_CORRECTIONS,
+  ARENA_SUBMIT_CORRECTION_PROVIDER_REQUESTS,
   ArenaSubmissionToolTracker,
   arenaDecisionFinishOutcome,
   arenaSubmissionCorrection,
@@ -488,19 +491,23 @@ describe("bounded submission correction", () => {
     });
   });
 
+  const descendantMissing = arenaDecisionFinishOutcome(observe({
+    rootTurnEnd: { kind: "max-tokens" },
+    orchestratedDescendantMissing: true,
+  }));
+
   it("asks an orchestrated root with no child for the subagent call first", () => {
     // Round 3 of private-us-liquid-100-s4: the orchestrated root hit its frozen
     // output ceiling before it ever called subagent, so a submit-only
     // correction would spend the single retry on a submission that admission
     // refuses with DESCENDANT_REQUIRED.
     const correction = arenaSubmissionCorrection({
-      outcome: arenaDecisionFinishOutcome(observe({
-        rootTurnEnd: { kind: "max-tokens" },
-        orchestratedDescendantMissing: true,
-      })),
+      outcome: descendantMissing,
       remainingMilliseconds: 120_000,
       budgetExhausted: false,
       orchestratedDescendantMissing: true,
+      remainingProviderRequests: ARENA_DESCENDANT_CORRECTION_PROVIDER_REQUESTS,
+      remainingDescendants: ARENA_DESCENDANT_CORRECTION_DESCENDANTS,
     });
     expect(correction.allowed).toBe(true);
     if (!correction.allowed) return;
@@ -513,6 +520,103 @@ describe("bounded submission correction", () => {
     const lines = correction.instruction.split("\n");
     expect(lines.every((line) => line.trim().length > 0)).toBe(true);
     expect(lines.at(-1)).toContain("decision_summary");
+  });
+
+  it("refuses the subagent-first correction without three provider requests", () => {
+    // The sequence is three generations of the shared budget: the root calls
+    // subagent, the child answers, and the root reads that tool result before it
+    // can call submit_portfolio_targets. Round 3 of private-us-liquid-100-s4 had
+    // two of four requests left, which registers the child and then trips
+    // ARENA_BUDGET_EXHAUSTED at the one call the correction wanted - and
+    // ARENA_MAX_SUBMISSION_CORRECTIONS leaves no second try.
+    expect(ARENA_DESCENDANT_CORRECTION_PROVIDER_REQUESTS).toBe(3);
+    expect(ARENA_SUBMIT_CORRECTION_PROVIDER_REQUESTS).toBe(1);
+    for (const remainingProviderRequests of [0, 1, 2]) {
+      expect(arenaSubmissionCorrection({
+        outcome: descendantMissing,
+        remainingMilliseconds: 120_000,
+        // Not already exhausted: one request of headroom is still reservable,
+        // which is exactly the state that used to let this path through.
+        budgetExhausted: false,
+        orchestratedDescendantMissing: true,
+        remainingProviderRequests,
+        remainingDescendants: ARENA_DESCENDANT_CORRECTION_DESCENDANTS,
+      })).toEqual({
+        allowed: false,
+        reason: "the frozen decision budget cannot cover the"
+          + " subagent-then-submit correction",
+      });
+    }
+  });
+
+  it("reads unknown or unusable provider headroom as none", () => {
+    // Fail closed: spending the single correction on a sequence the budget may
+    // not be able to finish is strictly worse than not spending it.
+    for (const remainingProviderRequests of [
+      undefined,
+      -1,
+      2.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+    ]) {
+      expect(arenaSubmissionCorrection({
+        outcome: descendantMissing,
+        remainingMilliseconds: 120_000,
+        budgetExhausted: false,
+        orchestratedDescendantMissing: true,
+        ...(remainingProviderRequests === undefined
+          ? {}
+          : { remainingProviderRequests }),
+        remainingDescendants: ARENA_DESCENDANT_CORRECTION_DESCENDANTS,
+      }).allowed).toBe(false);
+    }
+  });
+
+  it("refuses the subagent-first correction without a descendant slot", () => {
+    // reserveSubagent denies the child when no slot is left, so the three
+    // provider requests alone are not enough to finish the sequence.
+    expect(arenaSubmissionCorrection({
+      outcome: descendantMissing,
+      remainingMilliseconds: 120_000,
+      budgetExhausted: false,
+      orchestratedDescendantMissing: true,
+      remainingProviderRequests: 4,
+      remainingDescendants: 0,
+    })).toEqual({
+      allowed: false,
+      reason: "the frozen descendant budget cannot cover the"
+        + " subagent-then-submit correction",
+    });
+  });
+
+  it("allows the subagent-first correction with headroom to spare", () => {
+    const correction = arenaSubmissionCorrection({
+      outcome: descendantMissing,
+      remainingMilliseconds: 120_000,
+      budgetExhausted: false,
+      orchestratedDescendantMissing: true,
+      remainingProviderRequests: ARENA_DESCENDANT_CORRECTION_PROVIDER_REQUESTS + 1,
+      remainingDescendants: 2,
+    });
+    expect(correction.allowed).toBe(true);
+    if (!correction.allowed) return;
+    expect(correction.instruction).toContain("DESCENDANT_REQUIRED");
+  });
+
+  it("keeps the exhausted-budget refusal ahead of the path-specific one", () => {
+    // budgetExhausted covers the token and cost ceilings too, so it stays the
+    // reported cause even when the request headroom would have sufficed.
+    expect(arenaSubmissionCorrection({
+      outcome: descendantMissing,
+      remainingMilliseconds: 120_000,
+      budgetExhausted: true,
+      orchestratedDescendantMissing: true,
+      remainingProviderRequests: 4,
+      remainingDescendants: 1,
+    })).toEqual({
+      allowed: false,
+      reason: "the frozen decision budget has no remaining headroom",
+    });
   });
 
   it("keeps the correction submit-only once a descendant is registered", () => {
@@ -530,6 +634,27 @@ describe("bounded submission correction", () => {
       expect(correction.instruction).toContain("直接调用 submit_portfolio_targets");
       expect(correction.instruction).not.toContain("subagent");
       expect(correction.instruction).not.toContain("DESCENDANT_REQUIRED");
+    }
+  });
+
+  it("still corrects submit-only on the last remaining provider request", () => {
+    // One generation is the whole submit-only sequence, and any run that is not
+    // already at its ceiling has that much left - so this path keeps asking
+    // nothing beyond budgetExhausted, headroom counts or not.
+    for (const remainingProviderRequests of [undefined, 0, 1]) {
+      const correction = arenaSubmissionCorrection({
+        outcome: truncated,
+        remainingMilliseconds: 120_000,
+        budgetExhausted: false,
+        orchestratedDescendantMissing: false,
+        ...(remainingProviderRequests === undefined
+          ? {}
+          : { remainingProviderRequests }),
+        remainingDescendants: 0,
+      });
+      expect(correction.allowed).toBe(true);
+      if (!correction.allowed) continue;
+      expect(correction.instruction).toContain("直接调用 submit_portfolio_targets");
     }
   });
 
