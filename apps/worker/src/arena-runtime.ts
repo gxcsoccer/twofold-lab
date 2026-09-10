@@ -61,6 +61,7 @@ import type {
   PreparedArenaInvocation,
 } from "./arena-types.js";
 import { arenaRootMaxTokens } from "./arena-root-output-budget.js";
+import { arenaDecisionTask } from "./arena-decision-task.js";
 import {
   HarnessUsageAttemptBuffer,
   type FrozenHarnessUsage,
@@ -85,9 +86,6 @@ const TRUSTED_PRESETS = new Set(["twofold", "twofold-orchestrator"]);
 const LOCKED_PROVIDER = "deepseek-official";
 const LOCKED_MODEL = "deepseek-v4-pro";
 const RUNTIME_NAME = "twofold-arena-worker";
-const DEFAULT_TASK = `Execute the bound Twofold Arena portfolio decision now.
-
-Read the immutable decision packet first. You may delegate bounded, foreground research to the configured subagent when it materially improves the decision. Synthesize all evidence yourself and submit exactly one final target portfolio through submit_portfolio_targets. Do not use facts outside the packet and do not claim that orders or fills occurred.`;
 
 const SUBMIT_TOOL_NAME = "submit_portfolio_targets";
 
@@ -282,6 +280,14 @@ function canonicalCount(value: string, field: string): bigint {
     throw new Error(`${field} must be a canonical non-negative integer string`);
   }
   return BigInt(value);
+}
+
+/** Remaining budget headroom as a plain count, clamped at both ends. */
+function remainingCount(ceiling: bigint, used: bigint): number {
+  const remaining = ceiling - used;
+  if (remaining <= 0n) return 0;
+  const safe = BigInt(Number.MAX_SAFE_INTEGER);
+  return Number(remaining > safe ? safe : remaining);
 }
 
 function canonicalDecimal(value: string, field: string): string {
@@ -867,11 +873,7 @@ class ActiveArenaRun {
 
   reserveSubagent(callId: string): string | undefined {
     if (this.terminal || this.expired) return "Twofold Arena decision is no longer active";
-    const descendants = [...this.sessions.values()].filter(
-      (record) => record.node.origin === "subagent",
-    ).length;
-    const max = canonicalCount(this.projection.budget.maxDescendants, "maxDescendants");
-    if (BigInt(descendants + this.reservedDescendantCalls.size) >= max) {
+    if (this.remainingDescendants() === 0) {
       this.descendantBudgetDenied = true;
       this.queueBudgetExhausted("max_descendants");
       return "Twofold Arena descendant budget is exhausted";
@@ -885,9 +887,38 @@ class ActiveArenaRun {
     return undefined;
   }
 
+  /**
+   * Provider requests the frozen shared budget can still reserve.
+   *
+   * Every model generation anywhere in the tree pushes exactly one
+   * AttemptRecord, and beginProviderAttempt admits a request only while settled
+   * plus held plus this one stays within maxProviderRequests - where settled
+   * (treeUsage.providerRequestCount) plus held (unfinalized attempts) is
+   * attempts.length. So the ceiling minus attempts.length is precisely the
+   * remaining headroom, and its zero is the same condition providerLimitReached
+   * reports for requests.
+   */
+  private remainingProviderRequests(): number {
+    return remainingCount(
+      canonicalCount(this.projection.budget.maxProviderRequests, "maxProviderRequests"),
+      BigInt(this.attempts.length),
+    );
+  }
+
+  /** Descendant slots left, counting registered children and reserved calls. */
+  private remainingDescendants(): number {
+    const registered = [...this.sessions.values()].filter(
+      (record) => record.node.origin === "subagent",
+    ).length;
+    return remainingCount(
+      canonicalCount(this.projection.budget.maxDescendants, "maxDescendants"),
+      BigInt(registered + this.reservedDescendantCalls.size),
+    );
+  }
+
   private providerLimitReached(): boolean {
     const budget = this.projection.budget;
-    if (BigInt(this.attempts.length) >= BigInt(budget.maxProviderRequests)) return true;
+    if (this.remainingProviderRequests() === 0) return true;
     if (BigInt(this.projection.treeUsage.totalBillableTokens) >= BigInt(budget.maxBillableTokens)) {
       return true;
     }
@@ -1465,6 +1496,10 @@ class ActiveArenaRun {
       submissionToolFailures: this.submissionTool.failures,
       lastSubmissionFailure: this.submissionTool.lastFailure,
       correctionsSpent: this.correctionsSpent,
+      orchestratedDescendantMissing: !isArenaDescendantRequirementSatisfied(
+        this.prepared.identity.executionClass,
+        this.projection,
+      ),
     });
   }
 
@@ -1476,11 +1511,17 @@ class ActiveArenaRun {
    */
   async correctSubmissionOnce(handle: AgentHandle): Promise<void> {
     if (this.terminal || this.acceptedSubmission !== undefined) return;
-    const outcome = arenaDecisionFinishOutcome(this.finishObservation());
+    const observation = this.finishObservation();
+    const outcome = arenaDecisionFinishOutcome(observation);
     const correction = arenaSubmissionCorrection({
       outcome,
       remainingMilliseconds: this.deadlineAt - this.now().getTime(),
       budgetExhausted: this.providerLimitReached(),
+      orchestratedDescendantMissing: observation.orchestratedDescendantMissing,
+      // A missing descendant turns the correction into a three-generation
+      // sequence, so it needs the counts themselves, not just "not yet empty".
+      remainingProviderRequests: this.remainingProviderRequests(),
+      remainingDescendants: this.remainingDescendants(),
     });
     if (!correction.allowed) return;
     this.correctionsSpent += 1;
@@ -1898,7 +1939,11 @@ export class ArenaRuntime {
             });
           }, boundedDelay);
           handle.agent.followup(createUserMessage({
-            content: [{ type: "text", text: input.task ?? DEFAULT_TASK }],
+            content: [{
+              type: "text",
+              text: input.task
+                ?? arenaDecisionTask(input.prepared.identity.executionClass),
+            }],
             source: { kind: "user" },
           }));
           await handle.agent.whenIdle();

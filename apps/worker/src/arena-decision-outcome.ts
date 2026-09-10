@@ -27,6 +27,39 @@ export const ARENA_MAX_SUBMISSION_CORRECTIONS = 1;
  */
 export const ARENA_MINIMUM_CORRECTION_MILLISECONDS = 15_000;
 
+/**
+ * Provider requests the submit-only correction needs: one root generation that
+ * calls submit_portfolio_targets. Any run that is not already at its ceiling
+ * has this much left, which is why the submit-only path asks for nothing beyond
+ * the plain exhausted flag.
+ */
+export const ARENA_SUBMIT_CORRECTION_PROVIDER_REQUESTS = 1;
+
+/**
+ * Provider requests the subagent-then-submit correction needs.
+ *
+ * The Arena budget charges one shared provider request per model generation
+ * anywhere in the tree, and that sequence is three of them: the root reads the
+ * followup and calls `subagent`, the child answers, and only then can the root
+ * read that tool result and call submit_portfolio_targets - a tool result never
+ * turns into a tool call without another generation.
+ *
+ * Gating on less hands out an instruction the frozen budget cannot finish, and
+ * ARENA_MAX_SUBMISSION_CORRECTIONS leaves no second try. Round 3 of
+ * private-us-liquid-100-s4 is exactly that shape: its root spent two of four
+ * requests before truncating, so a correction issued with two left would have
+ * registered the child and then been denied ARENA_BUDGET_EXHAUSTED at the
+ * submit generation - the one call the correction existed to obtain.
+ *
+ * Three is the minimum, not a comfortable margin: a child that needs two
+ * generations of its own still runs out. Requiring more would refuse sequences
+ * that can in fact complete, so this stays at what the runtime provably needs.
+ */
+export const ARENA_DESCENDANT_CORRECTION_PROVIDER_REQUESTS = 3;
+
+/** Descendant slots the subagent-then-submit correction needs. */
+export const ARENA_DESCENDANT_CORRECTION_DESCENDANTS = 1;
+
 const MAX_FAILURE_CODE_LENGTH = 120;
 
 /**
@@ -70,6 +103,13 @@ export interface ArenaDecisionFinishObservation {
   readonly submissionToolFailures: number;
   readonly lastSubmissionFailure: ArenaSubmissionToolFailure | null;
   readonly correctionsSpent: number;
+  /**
+   * An ORCHESTRATED root that never registered a research subagent. It does not
+   * change how the finish is classified - a truncated turn is still
+   * ROOT_OUTPUT_TRUNCATED - but it does change what the single correction has
+   * to ask for, because submitting without a child is refused by admission.
+   */
+  readonly orchestratedDescendantMissing: boolean;
 }
 
 export interface ArenaDecisionOutcome {
@@ -377,6 +417,22 @@ export function arenaSubmissionCorrection(input: {
   readonly outcome: ArenaDecisionOutcome;
   readonly remainingMilliseconds: number;
   readonly budgetExhausted: boolean;
+  /**
+   * Taken from the finish observation. Omitted or false means the descendant
+   * requirement is already satisfied or does not apply, so the correction asks
+   * for the submission alone.
+   */
+  readonly orchestratedDescendantMissing?: boolean;
+  /**
+   * Provider requests the frozen shared budget can still reserve, counting the
+   * whole Agent tree. Only the descendant-first path reads it, and an omitted
+   * or unusable value is read as "not enough" rather than "plenty": spending
+   * the single correction on a sequence the budget cannot finish is strictly
+   * worse than not spending it.
+   */
+  readonly remainingProviderRequests?: number;
+  /** Descendant slots the frozen budget can still reserve, same convention. */
+  readonly remainingDescendants?: number;
 }): ArenaSubmissionCorrection {
   if (!input.outcome.correctable || input.outcome.failureCode === null) {
     return Object.freeze({
@@ -399,18 +455,73 @@ export function arenaSubmissionCorrection(input: {
       reason: "the frozen submission deadline has no remaining headroom",
     });
   }
+  if (input.orchestratedDescendantMissing === true) {
+    // The descendant-first instruction is a three-generation sequence, so
+    // "budget not already empty" is the wrong test for it. Refusing outright is
+    // the only safe alternative: submit-only is not a fallback here, because a
+    // root with no child is precisely what admission refuses with
+    // DESCENDANT_REQUIRED.
+    if (
+      headroom(input.remainingProviderRequests)
+        < ARENA_DESCENDANT_CORRECTION_PROVIDER_REQUESTS
+    ) {
+      return Object.freeze({
+        allowed: false,
+        reason: "the frozen decision budget cannot cover the"
+          + " subagent-then-submit correction",
+      });
+    }
+    if (
+      headroom(input.remainingDescendants)
+        < ARENA_DESCENDANT_CORRECTION_DESCENDANTS
+    ) {
+      return Object.freeze({
+        allowed: false,
+        reason: "the frozen descendant budget cannot cover the"
+          + " subagent-then-submit correction",
+      });
+    }
+  }
   return Object.freeze({
     allowed: true,
-    instruction: correctionInstruction(input.outcome),
+    instruction: correctionInstruction(
+      input.outcome,
+      input.orchestratedDescendantMissing === true,
+    ),
   });
 }
 
-function correctionInstruction(outcome: ArenaDecisionOutcome): string {
+/** Unknown, fractional, or negative remaining headroom counts as none. */
+function headroom(value: number | undefined): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : 0;
+}
+
+/**
+ * Ask for exactly what admission is still missing.
+ *
+ * Round 3 of private-us-liquid-100-s4 is why the orchestrated branch exists: a
+ * submit-only correction sent to a root that never spawned a child spends the
+ * single retry producing DESCENDANT_REQUIRED, and ARENA_MAX_SUBMISSION_CORRECTIONS
+ * leaves no second one. Neither branch relaxes the frozen budget or deadline.
+ */
+function correctionInstruction(
+  outcome: ArenaDecisionOutcome,
+  descendantMissing: boolean,
+): string {
   return [
     `上一轮没有产生被接受的目标组合，原因代码 ${outcome.failureCode}：`,
     `${outcome.failureMessage ?? "无附加说明"}。`,
     "这是本次决策唯一一次纠正机会，截止时间与预算都不会因此放宽。",
-    "请直接调用 submit_portfolio_targets 提交一次合规目标权重：",
+    ...(descendantMissing
+      ? [
+          "本参赛者是编排型(ORCHESTRATED)且尚未注册研究子 Agent，"
+          + "此时直接提交会被 DESCENDANT_REQUIRED 拒绝。",
+          "请先调用 subagent 恰好一次做一轮简短的独立风险复核，调用前不要展开长篇推理，",
+          "拿到子 Agent 结果后立即调用 submit_portfolio_targets 提交一次合规目标权重：",
+        ]
+      : ["请直接调用 submit_portfolio_targets 提交一次合规目标权重："]),
     "沿用同一个 decision packet 的 decision_packet_id 与 packet_sha256，",
     "所有 target_weight_bps 与 cash_weight_bps 之和必须正好是 10000，",
     "并给出非空的 decision_summary。不要虚构订单、成交、费用、税或 NAV。",
